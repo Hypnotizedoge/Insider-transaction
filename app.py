@@ -115,59 +115,46 @@ def create_chart(price_df, insider_df, ticker_name):
         marker_color=colors
     ), row=2, col=1)
 
-    # 4. Insider Transaction Markers
+    # 4. Insider Transaction Markers — 4 separate series for legibility
+    SERIES_CONFIG = [
+        # (category_label, tx_type, display_name, symbol, color)
+        ("Changes in Shareholding",       "Buy",  "SH — Buy",        "triangle-up",   "#00ff00"),  # bright green
+        ("Changes in Shareholding",       "Sell", "SH — Sell",       "triangle-down", "#ff4444"),  # red
+        ("Dealings in Listed Securities", "Buy",  "Dealings — Buy",  "triangle-up",   "#00ccff"),  # cyan
+        ("Dealings in Listed Securities", "Sell", "Dealings — Sell", "triangle-down", "#ff9900"),  # orange
+    ]
+
     if not insider_df.empty:
-        buys = insider_df[insider_df['Type'] == 'Buy']
-        sells = insider_df[insider_df['Type'] == 'Sell']
-        
-        if not buys.empty:
-            hover_text_buys = [
-                f"<b>Category:</b> {row['Category']}<br>"
-                f"<b>Type:</b> BUY<br>"
-                f"<b>Date:</b> {row['Date'].strftime('%d-%b-%y')}<br>"
-                f"<b>Amount:</b> {row['Amount']:,} <br>"
-                f"<b>Price:</b> RM {row['Price']:.3f}<br>"
-                f"<b>Person:</b> {row['Participant']}"
-                for _, row in buys.iterrows()
+        for cat, tx_type, series_name, symbol, color in SERIES_CONFIG:
+            subset = insider_df[
+                (insider_df['Category'] == cat) & (insider_df['Type'] == tx_type)
             ]
+            if subset.empty:
+                continue
+
+            hover_texts = [
+                f"<b>{row['Participant']}</b><br>"
+                f"<b>Category:</b> {row['Category']}<br>"
+                f"<b>Transaction:</b> {row['Type'].upper()}<br>"
+                f"<b>Date:</b> {pd.Timestamp(row['Date']).strftime('%d-%b-%y')}<br>"
+                f"<b>Shares:</b> {int(row['Amount']):,}<br>"
+                f"<b>Price:</b> RM {row['Price']:.3f}"
+                for _, row in subset.iterrows()
+            ]
+
             fig.add_trace(go.Scatter(
-                x=buys['Date'],
-                y=buys['Price'],
+                x=subset['Date'],
+                y=subset['Price'],
                 mode='markers',
                 marker=dict(
-                    symbol='triangle-up',
+                    symbol=symbol,
                     size=16,
-                    color='#00ff00', # Bright green
-                    line=dict(width=2, color='black')
+                    color=color,
+                    line=dict(width=2, color='#111111')
                 ),
-                name='Insider BUY',
+                name=series_name,
                 hoverinfo='text',
-                hovertext=hover_text_buys
-            ), row=1, col=1)
-            
-        if not sells.empty:
-            hover_text_sells = [
-                f"<b>Category:</b> {row['Category']}<br>"
-                f"<b>Type:</b> SELL<br>"
-                f"<b>Date:</b> {row['Date'].strftime('%d-%b-%y')}<br>"
-                f"<b>Amount:</b> {row['Amount']:,} <br>"
-                f"<b>Price:</b> RM {row['Price']:.3f}<br>"
-                f"<b>Person:</b> {row['Participant']}"
-                for _, row in sells.iterrows()
-            ]
-            fig.add_trace(go.Scatter(
-                x=sells['Date'],
-                y=sells['Price'],
-                mode='markers',
-                marker=dict(
-                    symbol='triangle-down',
-                    size=16,
-                    color='#ff0000', # Bright red
-                    line=dict(width=2, color='black')
-                ),
-                name='Insider SELL',
-                hoverinfo='text',
-                hovertext=hover_text_sells
+                hovertext=hover_texts
             ), row=1, col=1)
 
     # Bloomberg Style Layout Tweaks
@@ -234,11 +221,43 @@ if ticker_input:
             
             # Show Data Table
             if not insider_data.empty:
-                st.subheader(f"Recent Insider Transactions ({selected_period_label})")
-                st.dataframe(
-                    insider_data.style.format({"Amount": "{:,}", "Price": "{:.3f}"})\
-                                    .applymap(lambda v: 'color: green;' if v == 'Buy' else 'color: red;' if v == 'Sell' else '', subset=['Type']),
-                    use_container_width=True
+                st.subheader(f"Insider Transactions ({selected_period_label})")
+
+                # Rename columns for display clarity
+                display_df = insider_data.rename(columns={
+                    'Participant': 'Name / Company',
+                    'Amount': 'Shares',
+                    'Price': 'Price (RM)'
+                })
+
+                def style_type(val):
+                    if val == 'Buy':
+                        return 'color: #00ff00; font-weight: bold'
+                    elif val == 'Sell':
+                        return 'color: #ff4444; font-weight: bold'
+                    return ''
+
+                def style_category(val):
+                    if val == 'Dealings in Listed Securities':
+                        return 'color: #00ccff'
+                    elif val == 'Changes in Shareholding':
+                        return 'color: #ff9900'
+                    return ''
+
+                styled = (
+                    display_df.style
+                    .format({"Shares": "{:,}", "Price (RM)": "{:.3f}"})
+                    .applymap(style_type, subset=['Type'])
+                    .applymap(style_category, subset=['Category'])
                 )
+
+                st.dataframe(styled, use_container_width=True)
+
+                # Summary metrics
+                col_a, col_b, col_c, col_d = st.columns(4)
+                col_a.metric("Total Transactions", len(insider_data))
+                col_b.metric("Buys", len(insider_data[insider_data['Type'] == 'Buy']))
+                col_c.metric("Sells", len(insider_data[insider_data['Type'] == 'Sell']))
+                col_d.metric("Total Shares Traded", f"{insider_data['Amount'].sum():,}")
         else:
             st.warning(f"No price data found for {ticker_input} over the selected period. Please check the ticker symbol (ensure it ends with .KL).")
