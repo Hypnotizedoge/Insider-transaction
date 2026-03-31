@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import sys, io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+try:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+except AttributeError:
+    pass  # Streamlit Cloud / already-wrapped stdout has no .buffer attribute
 """
 Bursa Malaysia - Scraper for "Dealings in Listed Securities" (Chapter 14)
 Target: https://www.bursamalaysia.com/bm/market_information/announcements/company_announcement?company=0151
