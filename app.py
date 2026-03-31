@@ -158,22 +158,33 @@ if scrape_triggered:
 
                 # --- 6. Split acquisitions vs disposals ---
                 # Use na=False so NaN Transaction Type rows are excluded cleanly
-                acq = dealings_df[
-                    dealings_df['Transaction Type'].str.lower().str.contains(
-                        "acqui|bought|purchase", na=False
-                    )
-                ].copy()
-                dis = dealings_df[
-                    dealings_df['Transaction Type'].str.lower().str.contains(
-                        "dispos|sold|sale", na=False
-                    )
-                ].copy()
+                acq = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("acqui|bought|purchase", na=False)].copy()
+                dis = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("dispos|sold|sale", na=False)].copy()
 
-                # Drop rows with no price — they'd be invisible on chart anyway
+                # For DRCO forms that don't explicitly list the price, interpolate them using the stock's Close price for that day!
+                # This ensures the dots still show up on the chart timeline instead of becoming invisible.
+                date_to_close = stock_df['Close'].to_dict()
+                def fill_missing_price(row):
+                    if pd.isna(row['Price (RM)']):
+                        # Find the closest matching stock date (or exact)
+                        date_val = row['Parsed Date']
+                        if date_val in date_to_close:
+                            return date_to_close[date_val]
+                        else:
+                            # Search locally inside stock_df index (handle weekends by using last valid close)
+                            idx = stock_df.index.get_indexer([date_val], method='pad')
+                            if idx[0] >= 0:
+                                return stock_df['Close'].iloc[idx[0]]
+                    return row['Price (RM)']
+
+                acq['Price (RM)'] = acq.apply(fill_missing_price, axis=1)
+                dis['Price (RM)'] = dis.apply(fill_missing_price, axis=1)
+
+                # Now drop any that STILL have no price (e.g. occurred before stock data history)
                 acq = acq.dropna(subset=['Price (RM)'])
                 dis = dis.dropna(subset=['Price (RM)'])
 
-                st.info(f"📍 Showing **{len(acq)} acquisitions** (🟢) and **{len(dis)} disposals** (🔴) on chart. "
+                st.info(f"📍 Plotting **{len(acq)} acquisitions** (🟢) and **{len(dis)} disposals** (🔴) on chart. "
                         f"Period: {min_date.date()} → {max_date.date()}")
 
                 # --- 7. Build chart ---

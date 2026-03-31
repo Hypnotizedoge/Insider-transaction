@@ -16,13 +16,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# List of browser profiles to randomly select from to avoid static TLS fingerprinting
-IMPERSONATE_PROFILES = ["chrome110", "safari15_5", "safari15_3", "chrome116"]
+IMPERSONATE = "chrome120"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-COMPANY_CODE    = "0151"
+COMPANY_CODE    = "0001"
 CATEGORY_ID     = "DRCO"     # Director/CEO and Major Shareholder Dealings
 PAGES_TO_SCRAPE = 5
 OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
@@ -34,6 +33,12 @@ API_URL  = (
     f"{BASE}/api/v1/announcements/search"
     "?ann_type=company&company={company}&cat={category}&per_page=50&page={page}"
 )
+
+HEADERS = {
+    "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "en-US,en;q=0.9",
+    "X-Requested-With": "XMLHttpRequest",
+}
 
 
 
@@ -178,6 +183,14 @@ def parse_detail(html_text: str) -> list:
                     elif "description of \"others\" type" in label.lower() and val:
                         if not cur_rec["Transaction Type"] or cur_rec["Transaction Type"].lower() == "others":
                             cur_rec["Transaction Type"] = val
+
+                    # Fallback aggressive sniff for transaction type if it's hiding in another value
+                    if val and not cur_rec.get("Transaction Type"):
+                        vl = val.lower()
+                        if any(w in vl for w in ["acquired", "acquisition", "bought"]):
+                            cur_rec["Transaction Type"] = "Acquired"
+                        elif any(w in vl for w in ["disposed", "disposal", "sold"]):
+                            cur_rec["Transaction Type"] = "Disposed"
                     elif "description of \"others\" designation" in label.lower() and val:
                         if not cur_rec["Designation"] or cur_rec["Designation"].lower() == "others":
                             cur_rec["Designation"] = val
@@ -218,11 +231,13 @@ def parse_detail(html_text: str) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 def _collect_links(session, company_code: str, category: str, pages: int):
     """Returns (links, api_stats) where api_stats has pages_fetched, total_rows_seen, sample_titles."""
+    main_url = MAIN_URL.format(company=company_code)
+    api_headers = {**HEADERS, "Referer": main_url}
     api_stats = {"pages_fetched": 0, "total_rows_seen": 0, "sample_titles": []}
 
     # Warm up the session with a visit to the main page
     try:
-        session.get(MAIN_URL.format(company=company_code), timeout=15)
+        session.get(main_url, timeout=15)
         log.info("Cloudflare clearance OK")
     except Exception as e:
         log.warning(f"Clearance request failed (continuing anyway): {e}")
@@ -231,7 +246,7 @@ def _collect_links(session, company_code: str, category: str, pages: int):
     for p in range(1, pages + 1):
         url = API_URL.format(company=company_code, category=category, page=p)
         try:
-            r = session.get(url, timeout=15)
+            r = session.get(url, headers=api_headers, timeout=15)
         except Exception as e:
             log.warning(f"API page {p} request error: {e}")
             break
@@ -342,15 +357,14 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
 
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
 
-    # Create a curl_cffi session with a random profile and optional proxy
-    profile = random.choice(IMPERSONATE_PROFILES)
+    # Create a session with a strict modern chrome profile + proxy if provided
     proxies = {"http": proxy, "https": proxy} if proxy else None
     
     try:
-        session = cffi_requests.Session(impersonate=profile, proxies=proxies)
-        log.info(f"Created standard session with profile: {profile}")
+        session = cffi_requests.Session(impersonate=IMPERSONATE, proxies=proxies)
+        log.info(f"Created standard session with profile: {IMPERSONATE}")
     except Exception as e:
-        log.warning(f"Failed to create session with profile {profile}: {e}. Falling back to default.")
+        log.warning(f"Failed to create session with profile {IMPERSONATE}: {e}. Falling back to default.")
         session = cffi_requests.Session(impersonate="chrome110", proxies=proxies)
 
     # --- Step 1: collect links via API ---
@@ -391,11 +405,22 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
         t_type = str(r.get("Transaction Type") or "").lower()
         d_sec  = str(r.get("Description") or "").lower()
 
-        is_deal    = any(t in t_type for t in ["acquired", "acquisition", "disposed", "disposal", "bought", "sold"])
+        is_deal    = any(t in t_type for t in ["acquired", "acquisition", "disposed", "disposal", "bought", "sold", "interest"])
+        
+        # We explicitly pass DRCO category rows because they are inherently insider dealing updates.
+        is_drco    = (category == "DRCO")
+        
         # Pass if description has "ordinary share" OR is empty (often unparsed)
         is_ordinary = "ordinary share" in d_sec or d_sec.strip() == ""
 
-        if is_deal and is_ordinary:
+        if (is_deal or is_drco) and is_ordinary:
+            # Coerce the transaction type so the Streamlit frontend can plot it
+            if is_drco and not is_deal:
+                if "acqui" in d_sec or "bought" in d_sec:
+                    r["Transaction Type"] = "Acquired"
+                elif "dispos" in d_sec or "sold" in d_sec:
+                    r["Transaction Type"] = "Disposed"
+
             results.append(r)
 
     df = pd.DataFrame(results)
