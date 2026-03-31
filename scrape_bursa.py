@@ -22,8 +22,8 @@ IMPERSONATE_PROFILES = ["chrome110", "safari15_5", "safari15_3", "chrome116"]
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-COMPANY_CODE    = "1023"
-CATEGORY_ID     = "14"       # Dealings in Listed Securities (Chapter 14)
+COMPANY_CODE    = "0151"
+CATEGORY_ID     = "DRCO"     # Director/CEO and Major Shareholder Dealings
 PAGES_TO_SCRAPE = 20
 OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
 MAX_WORKERS  = 8
@@ -32,23 +32,10 @@ BASE     = "https://www.bursamalaysia.com"
 MAIN_URL = f"{BASE}/bm/market_information/announcements/company_announcement?company={{company}}"
 API_URL  = (
     f"{BASE}/api/v1/announcements/search"
-    "?ann_type=company&company={company}&category={category}&per_page=50&page={page}"
+    "?ann_type=company&company={company}&cat={category}&per_page=50&page={page}"
 )
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.5",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Upgrade-Insecure-Requests": "1"
-}
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PARSING
@@ -231,13 +218,11 @@ def parse_detail(html_text: str) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 def _collect_links(session, company_code: str, category: str, pages: int):
     """Returns (links, api_stats) where api_stats has pages_fetched, total_rows_seen, sample_titles."""
-    main_url = MAIN_URL.format(company=company_code)
-    api_headers = {**HEADERS, "Referer": main_url}
     api_stats = {"pages_fetched": 0, "total_rows_seen": 0, "sample_titles": []}
 
     # Warm up the session with a visit to the main page
     try:
-        session.get(main_url, timeout=15)
+        session.get(MAIN_URL.format(company=company_code), timeout=15)
         log.info("Cloudflare clearance OK")
     except Exception as e:
         log.warning(f"Clearance request failed (continuing anyway): {e}")
@@ -246,7 +231,7 @@ def _collect_links(session, company_code: str, category: str, pages: int):
     for p in range(1, pages + 1):
         url = API_URL.format(company=company_code, category=category, page=p)
         try:
-            r = session.get(url, headers=api_headers, timeout=15)
+            r = session.get(url, timeout=15)
         except Exception as e:
             log.warning(f"API page {p} request error: {e}")
             break
@@ -283,13 +268,10 @@ def _collect_links(session, company_code: str, category: str, pages: int):
             if len(api_stats["sample_titles"]) < 5 and raw_title not in api_stats["sample_titles"]:
                 api_stats["sample_titles"].append(raw_title)
 
-            # Only "Dealings Outside Closed Period" or "During Closed Period"
-            is_dealings = (
-                "DEALINGS IN LISTED SECURITIES" in title
-                and "CHAPTER 14" in title
-                and "INTENTION" not in title
-                and ("DEALINGS OUTSIDE CLOSED PERIOD" in title or "DEALINGS DURING CLOSED PERIOD" in title)
-            )
+            # DRCO category is extremely clean for insider actions.
+            # We just exclude notices of 'intention' to deal, which aren't executed trades yet.
+            is_dealings = "INTENTION" not in title
+
             if not is_dealings:
                 continue
 
@@ -319,51 +301,36 @@ def _fetch_detail(session, lnk: dict) -> list:
     results = []
 
     try:
-        r = session.get(href, timeout=20)
+        headers = {"Referer": referer}
+        r1 = session.get(href, headers=headers, timeout=15)
+        soup = BeautifulSoup(r1.text, "lxml")
+        
+        iframe = soup.find("iframe", id="bm_ann_detail_iframe")
+        if not iframe or not iframe.get("src"):
+            return results
+
+        src = iframe["src"]
+        frame_url = src if src.startswith("http") else f"{BASE}{src}"
+        
+        r2 = session.get(frame_url, headers=headers, timeout=15)
+        entries = parse_detail(r2.text)
+        for entry in entries:
+            results.append({
+                "Date Posted":          lnk["date_posted"],
+                "Title":                title,
+                "Name":                 entry["Name"],
+                "Designation":          entry["Designation"],
+                "Description":          entry["Description of Securities"],
+                "Date of Transaction":  entry["Date of Transaction"],
+                "Price (RM)":           entry["Price (RM)"],
+                "No. of Shares":        entry["No. of Shares"],
+                "Transaction Type":     entry["Transaction Type"],
+                "URL":                  href,
+            })
+        return results
     except Exception as e:
-        log.warning(f"Detail fetch failed [{title[:50]}]: {e}")
+        logger.warning(f"Detail fetch failed for {href}: {e}")
         return results
-
-    if r.status_code != 200:
-        log.warning(f"Detail HTTP {r.status_code}: {href}")
-        return results
-
-    # Try iframe first
-    soup = BeautifulSoup(r.text, "lxml")
-    iframe = soup.find("iframe", id="bm_ann_detail_iframe")
-    html_to_parse = None
-
-    if iframe and iframe.get("src"):
-        iframe_src = iframe["src"]
-        if not iframe_src.startswith("http"):
-            iframe_src = f"{BASE}{iframe_src}"
-        try:
-            ri = session.get(iframe_src, timeout=20)
-            if ri.status_code == 200:
-                html_to_parse = ri.text
-            else:
-                log.warning(f"Iframe HTTP {ri.status_code}: {iframe_src}")
-        except Exception as e:
-            log.warning(f"Iframe fetch error: {e}")
-
-    if html_to_parse is None:
-        html_to_parse = r.text  # fallback: parse the main page
-
-    entries = parse_detail(html_to_parse)
-    for entry in entries:
-        results.append({
-            "Date Posted":          lnk["date_posted"],
-            "Title":                title,
-            "Name":                 entry["Name"],
-            "Designation":          entry["Designation"],
-            "Description":          entry["Description of Securities"],
-            "Date of Transaction":  entry["Date of Transaction"],
-            "Price (RM)":           entry["Price (RM)"],
-            "No. of Shares":        entry["No. of Shares"],
-            "Transaction Type":     entry["Transaction Type"],
-            "URL":                  href,
-        })
-    return results
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -400,9 +367,13 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     # --- Step 2: fetch detail pages in parallel ---
     log.info(f"Fetching {len(links)} detail pages with {MAX_WORKERS} parallel workers…")
     raw_results = []
+    main_url_for_ref = MAIN_URL.format(company=company_code)
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_lnk = {executor.submit(_fetch_detail, session, lnk): lnk for lnk in links}
+        future_to_lnk = {
+            executor.submit(_fetch_detail_page, session, main_url_for_ref, lnk, log): lnk 
+            for lnk in links
+        }
         for future in as_completed(future_to_lnk):
             try:
                 raw_results.extend(future.result())
