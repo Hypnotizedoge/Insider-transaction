@@ -18,9 +18,9 @@ log = logging.getLogger(__name__)
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-COMPANY_CODE    = "0151"
+COMPANY_CODE    = "1023"
 CATEGORY_ID     = "14"       # Dealings in Listed Securities (Chapter 14)
-PAGES_TO_SCRAPE = 10
+PAGES_TO_SCRAPE = 20
 OUTPUT_CSV      = "bursa_dealings.csv"
 MAX_WORKERS     = 8          # Parallel detail-page fetches
 
@@ -220,9 +220,11 @@ def parse_detail(html_text: str) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 1 — Collect announcement links from JSON API
 # ──────────────────────────────────────────────────────────────────────────────
-def _collect_links(scraper, company_code: str, category: str, pages: int) -> list:
+def _collect_links(scraper, company_code: str, category: str, pages: int):
+    """Returns (links, api_stats) where api_stats has pages_fetched, total_rows_seen, sample_titles."""
     main_url = MAIN_URL.format(company=company_code)
     api_headers = {**HEADERS, "Referer": main_url}
+    api_stats = {"pages_fetched": 0, "total_rows_seen": 0, "sample_titles": []}
 
     # Light Cloudflare clearance — one GET, no sleep
     try:
@@ -250,6 +252,8 @@ def _collect_links(scraper, company_code: str, category: str, pages: int) -> lis
             log.warning(f"API page {p} JSON parse error: {e}")
             break
 
+        api_stats["pages_fetched"] += 1
+        api_stats["total_rows_seen"] += len(rows)
         log.info(f"Page {p}: {len(rows)} items")
         if not rows:
             break
@@ -262,10 +266,14 @@ def _collect_links(scraper, company_code: str, category: str, pages: int) -> lis
             if not a:
                 continue
 
-            title = a.get_text(strip=True).upper()
+            raw_title = a.get_text(strip=True)
+            title = raw_title.upper()
+
+            # Capture sample titles for diagnostics (first 5 unique)
+            if len(api_stats["sample_titles"]) < 5 and raw_title not in api_stats["sample_titles"]:
+                api_stats["sample_titles"].append(raw_title)
 
             # Only "Dealings Outside Closed Period" or "During Closed Period"
-            # Skip everything else (notices of intention, etc.)
             is_dealings = (
                 "DEALINGS IN LISTED SECURITIES" in title
                 and "CHAPTER 14" in title
@@ -282,13 +290,13 @@ def _collect_links(scraper, company_code: str, category: str, pages: int) -> lis
             date_text = " ".join(date_soup.stripped_strings)
             date_posted = " ".join(date_text.split()[:3])
 
-            links.append({"href": full_url, "title": a.get_text(strip=True), "date_posted": date_posted})
+            links.append({"href": full_url, "title": raw_title, "date_posted": date_posted})
 
         # Small polite delay between API pages only
         time.sleep(0.3)
 
     log.info(f"Total qualifying links: {len(links)}")
-    return links
+    return links, api_stats
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -360,9 +368,11 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     scraper = cloudscraper.create_scraper()
 
     # --- Step 1: collect links via API ---
-    links = _collect_links(scraper, company_code, category, pages)
+    links, api_stats = _collect_links(scraper, company_code, category, pages)
+    stats["pages_fetched"] = api_stats["pages_fetched"]
+    stats["total_rows_seen"] = api_stats["total_rows_seen"]
+    stats["sample_titles"] = api_stats["sample_titles"]
     stats["links_found"] = len(links)
-    stats["pages_fetched"] = min(pages, pages)  # updated inside _collect_links via log
 
     if not links:
         log.warning("No qualifying announcement links found.")

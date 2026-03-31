@@ -83,13 +83,21 @@ if scrape_btn:
         
         # Always show diagnostic stats
         with st.expander("🔧 Scrape Diagnostics", expanded=True):
-            col1, col2, col3, col4 = st.columns(4)
+            col1, col2, col3, col4, col5 = st.columns(5)
             col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
-            col2.metric("Links Found", scrape_stats.get("links_found", 0))
-            col3.metric("Raw Results", scrape_stats.get("raw_results", 0))
-            col4.metric("After Filter", scrape_stats.get("after_filter", 0))
+            col2.metric("API Rows Seen", scrape_stats.get("total_rows_seen", 0))
+            col3.metric("Links Matched", scrape_stats.get("links_found", 0))
+            col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
+            col5.metric("After Filter", scrape_stats.get("after_filter", 0))
             if scrape_stats.get("errors"):
-                st.error("Errors encountered: " + " | ".join(scrape_stats["errors"]))
+                st.error("Errors: " + " | ".join(scrape_stats["errors"]))
+            if scrape_stats.get("sample_titles"):
+                st.caption("**Sample titles seen in API (before title filter):**")
+                for t in scrape_stats["sample_titles"]:
+                    st.caption(f"• {t}")
+            elif scrape_stats.get("pages_fetched", 0) == 0:
+                st.error("⛔ No API pages fetched — Cloudflare may be blocking Streamlit Cloud, or cloudscraper is not installed.")
+
         
         if dealings_df.empty:
             st.warning("No insider dealings (Acquisitions/Disposals) found in the selected range.")
