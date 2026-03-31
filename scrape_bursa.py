@@ -294,7 +294,7 @@ def _collect_links(session, company_code: str, category: str, pages: int):
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 2 — Fetch one detail page + iframe (called in parallel)
 # ──────────────────────────────────────────────────────────────────────────────
-def _fetch_detail(session, lnk: dict) -> list:
+def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
     """Returns list of raw result dicts for one announcement link."""
     href  = lnk["href"]
     title = lnk["title"]
