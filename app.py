@@ -13,89 +13,46 @@ with st.sidebar:
     st.header("⚙️ Settings")
     company_code = st.text_input("Company Code (e.g., 0151)", value="0151")
     period = st.selectbox("Stock Price Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
-
-    st.subheader("Data Source")
-    mode = st.radio("Choose mode", [
-        "🌐 Live Scrape (Backend/Streamlit)",
-        "📂 Auto-Load Saved CSV", 
-        "📤 Upload Manual CSV"
-    ], index=0)
+    pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=20)
+    
+    st.divider()
+    st.info("🌐 Fetching data directly on the server")
+    scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
 
     dealings_df = pd.DataFrame()
     scrape_triggered = False
 
-    if mode == "📂 Auto-Load Saved CSV":
-        st.info(
-            f"Looking for saved data for **{company_code}**...\n\n"
-            "To update this data, run `python scrape_bursa.py --company " + company_code + "` "
-            "locally and commit the resulting CSV file to your repository.",
-            icon="💡"
-        )
-        analyze_btn = st.button("📊 Load & Analyze", use_container_width=True)
-        if analyze_btn:
-            import os
-            expected_file = f"{company_code}_bursa_dealings.csv"
-            # Fallback to the old name if the new one doesn't exist
-            if not os.path.exists(expected_file) and os.path.exists("bursa_dealings.csv"):
-                expected_file = "bursa_dealings.csv"
+    if scrape_btn:
+        try:
+            import scrape_bursa
+            with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
+                result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+                if isinstance(result, tuple):
+                    dealings_df, scrape_stats = result
+                else:
+                    dealings_df = result
+                    scrape_stats = {}
 
-            if os.path.exists(expected_file):
-                dealings_df = pd.read_csv(expected_file)
-                scrape_triggered = True
-                st.toast(f"Loaded {expected_file}", icon="✅")
-            else:
-                st.error(f"Could not find `{expected_file}` in the app directory. Please run the scraper locally first and ensure the file is in the same folder as app.py.")
-
-    elif mode == "📤 Upload Manual CSV":
-        st.info(
-            "Run `scrape_bursa.py` on your local machine to generate `bursa_dealings.csv`, "
-            "then upload it here.",
-            icon="💡"
-        )
-        uploaded_file = st.file_uploader("Upload bursa_dealings.csv", type=["csv"])
-        analyze_btn = st.button("📊 Analyze Uploaded Data", use_container_width=True)
-        if analyze_btn and uploaded_file is not None:
-            dealings_df = pd.read_csv(uploaded_file)
+            # Show diagnostics
+            with st.expander("🔧 Scrape Diagnostics", expanded=True):
+                col1, col2, col3, col4, col5 = st.columns(5)
+                col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
+                col2.metric("API Rows Seen", scrape_stats.get("total_rows_seen", 0))
+                col3.metric("Links Matched", scrape_stats.get("links_found", 0))
+                col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
+                col5.metric("After Filter", scrape_stats.get("after_filter", 0))
+                if scrape_stats.get("errors"):
+                    st.error("Errors: " + " | ".join(scrape_stats["errors"]))
+                if scrape_stats.get("sample_titles"):
+                    st.caption("**Sample titles seen in API (before title filter):**")
+                    for t in scrape_stats["sample_titles"]:
+                        st.caption(f"• {t}")
+                elif scrape_stats.get("pages_fetched", 0) == 0:
+                    st.error("⛔ API fetch failed. Cloudflare may be completely blocking the Streamlit Cloud datacenter IP.")
+            
             scrape_triggered = True
-        elif analyze_btn and uploaded_file is None:
-            st.warning("Please upload a CSV file first.")
-
-    else:  # Live Scrape (Backend/Streamlit)
-        pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=10)
-        st.info("🌐 Fetching data directly on the server")
-        scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
-
-        if scrape_btn:
-            try:
-                import scrape_bursa
-                with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
-                    result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
-                    if isinstance(result, tuple):
-                        dealings_df, scrape_stats = result
-                    else:
-                        dealings_df = result
-                        scrape_stats = {}
-
-                # Show diagnostics
-                with st.expander("🔧 Scrape Diagnostics", expanded=True):
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
-                    col2.metric("API Rows Seen", scrape_stats.get("total_rows_seen", 0))
-                    col3.metric("Links Matched", scrape_stats.get("links_found", 0))
-                    col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
-                    col5.metric("After Filter", scrape_stats.get("after_filter", 0))
-                    if scrape_stats.get("errors"):
-                        st.error("Errors: " + " | ".join(scrape_stats["errors"]))
-                    if scrape_stats.get("sample_titles"):
-                        st.caption("**Sample titles seen in API:**")
-                        for t in scrape_stats["sample_titles"]:
-                            st.caption(f"• {t}")
-                    elif scrape_stats.get("pages_fetched", 0) == 0:
-                        st.error("⛔ API fetch failed. If you pushed the curl_cffi update, Streamlit Cloud might still be blocked by Cloudflare (datacenters IP block).")
-                scrape_triggered = True
-            except Exception as e:
-                st.error(f"Scraping error: {e}")
-
+        except Exception as e:
+            st.error(f"Scraping error: {e}")
 
 
 # --- Helper Functions ---
@@ -281,9 +238,4 @@ if scrape_triggered:
 
 
 else:
-    if mode == "📂 Auto-Load Saved CSV":
-        st.info(f"👈 Click 'Load & Analyze' in the sidebar to auto-load saved data for {company_code}.KL.")
-    elif mode == "📤 Upload Manual CSV":
-        st.info("👈 Upload a CSV file and click 'Analyze Uploaded Data' in the sidebar to begin.")
-    else:
-        st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
+    st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
