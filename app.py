@@ -14,14 +14,39 @@ with st.sidebar:
     company_code = st.text_input("Company Code (e.g., 0151)", value="0151")
     period = st.selectbox("Stock Price Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
 
-    st.divider()
     st.subheader("Data Source")
-    mode = st.radio("Choose mode", ["📤 Upload CSV (Recommended)", "🌐 Live Scrape (Local only)"], index=0)
+    mode = st.radio("Choose mode", [
+        "🌐 Live Scrape (Backend/Streamlit)",
+        "📂 Auto-Load Saved CSV", 
+        "📤 Upload Manual CSV"
+    ], index=0)
 
     dealings_df = pd.DataFrame()
     scrape_triggered = False
 
-    if mode == "📤 Upload CSV (Recommended)":
+    if mode == "📂 Auto-Load Saved CSV":
+        st.info(
+            f"Looking for saved data for **{company_code}**...\n\n"
+            "To update this data, run `python scrape_bursa.py --company " + company_code + "` "
+            "locally and commit the resulting CSV file to your repository.",
+            icon="💡"
+        )
+        analyze_btn = st.button("📊 Load & Analyze", use_container_width=True)
+        if analyze_btn:
+            import os
+            expected_file = f"{company_code}_bursa_dealings.csv"
+            # Fallback to the old name if the new one doesn't exist
+            if not os.path.exists(expected_file) and os.path.exists("bursa_dealings.csv"):
+                expected_file = "bursa_dealings.csv"
+
+            if os.path.exists(expected_file):
+                dealings_df = pd.read_csv(expected_file)
+                scrape_triggered = True
+                st.toast(f"Loaded {expected_file}", icon="✅")
+            else:
+                st.error(f"Could not find `{expected_file}` in the app directory. Please run the scraper locally first and ensure the file is in the same folder as app.py.")
+
+    elif mode == "📤 Upload Manual CSV":
         st.info(
             "Run `scrape_bursa.py` on your local machine to generate `bursa_dealings.csv`, "
             "then upload it here.",
@@ -35,9 +60,9 @@ with st.sidebar:
         elif analyze_btn and uploaded_file is None:
             st.warning("Please upload a CSV file first.")
 
-    else:  # Live Scrape mode
+    else:  # Live Scrape (Backend/Streamlit)
         pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=10)
-        st.warning("⚠️ Live scraping may be blocked on Streamlit Cloud due to Cloudflare IP restrictions. Run locally for best results.", icon="⚠️")
+        st.info("🌐 Fetching data directly on the server")
         scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
 
         if scrape_btn:
@@ -66,7 +91,7 @@ with st.sidebar:
                         for t in scrape_stats["sample_titles"]:
                             st.caption(f"• {t}")
                     elif scrape_stats.get("pages_fetched", 0) == 0:
-                        st.error("⛔ No API pages fetched — Cloudflare is likely blocking this server's IP. Use **Upload CSV** mode instead.")
+                        st.error("⛔ API fetch failed. If you pushed the curl_cffi update, Streamlit Cloud might still be blocked by Cloudflare (datacenters IP block).")
                 scrape_triggered = True
             except Exception as e:
                 st.error(f"Scraping error: {e}")
@@ -256,7 +281,9 @@ if scrape_triggered:
 
 
 else:
-    if mode == "📤 Upload CSV (Recommended)":
+    if mode == "📂 Auto-Load Saved CSV":
+        st.info(f"👈 Click 'Load & Analyze' in the sidebar to auto-load saved data for {company_code}.KL.")
+    elif mode == "📤 Upload Manual CSV":
         st.info("👈 Upload a CSV file and click 'Analyze Uploaded Data' in the sidebar to begin.")
     else:
         st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")

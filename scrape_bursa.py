@@ -23,7 +23,7 @@ IMPERSONATE = "chrome120"
 COMPANY_CODE    = "1023"
 CATEGORY_ID     = "14"       # Dealings in Listed Securities (Chapter 14)
 PAGES_TO_SCRAPE = 20
-OUTPUT_CSV      = "bursa_dealings.csv"
+OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
 MAX_WORKERS  = 8
 
 BASE     = "https://www.bursamalaysia.com"
@@ -445,7 +445,8 @@ if __name__ == "__main__":
 
     if not df.empty:
         print(df[["Date of Transaction", "Name", "Designation", "Price (RM)", "No. of Shares", "Transaction Type"]].to_string(index=False))
-        df.to_csv(OUTPUT_CSV, index=False)
-        print(f"\n✓ Saved {len(df)} rows to {OUTPUT_CSV}")
+        output_file = f"{args.company}_bursa_dealings.csv"
+        df.to_csv(output_file, index=False)
+        print(f"\n✓ Saved {len(df)} rows to {output_file}")
     else:
         print("No data extracted.")
