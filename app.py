@@ -101,112 +101,140 @@ if scrape_btn:
         
         if dealings_df.empty:
             st.warning("No insider dealings (Acquisitions/Disposals) found in the selected range.")
-            
-            # Show the price chart anyway
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=stock_df.index, y=stock_df['Close'], name="Close Price", line=dict(color="#2962FF", width=2)))
             fig.update_layout(title=f"Stock Price: {company_code}.KL", xaxis_title="Date", yaxis_title="Price (RM)", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.success(f"Successfully extracted {len(dealings_df)} dealings!")
-            
-            # 3. Process Dealings Data
-            # Note: scrape_bursa.py already converts 'Date of Transaction' to datetime
-            dealings_df['Parsed Date'] = pd.to_datetime(dealings_df['Date of Transaction'], dayfirst=True, errors='coerce')
-            dealings_df = dealings_df.dropna(subset=['Parsed Date'])
-            
-            # Debug: show raw scraped data before date filtering
-            with st.expander(f"🔍 Debug: Raw scraped data ({len(dealings_df)} rows before date filter)"):
-                st.dataframe(dealings_df, use_container_width=True)
+            st.success(f"✅ Successfully scraped {len(dealings_df)} dealings!")
 
-            # Filter dealings to match stock period range (index is already tz-naive)
+            # --- 3. Parse dates ---
+            # scrape_bursa may already return datetime; to_datetime handles both string and datetime
+            dealings_df['Parsed Date'] = pd.to_datetime(
+                dealings_df['Date of Transaction'], dayfirst=True, errors='coerce'
+            )
+            # Strip any timezone so comparison with stock index works
+            if hasattr(dealings_df['Parsed Date'].dtype, 'tz') and dealings_df['Parsed Date'].dt.tz is not None:
+                dealings_df['Parsed Date'] = dealings_df['Parsed Date'].dt.tz_localize(None)
+
+            dealings_df = dealings_df.dropna(subset=['Parsed Date'])
+
+            # --- 4. Show raw data for inspection ---
+            with st.expander(f"🔍 Raw scraped data ({len(dealings_df)} rows, before date filter)"):
+                st.dataframe(dealings_df[['Parsed Date', 'Name', 'Designation', 'Transaction Type', 'Price (RM)', 'No. of Shares']], use_container_width=True)
+
+            # --- 5. Filter to stock period ---
             min_date = stock_df.index.min()
             max_date = stock_df.index.max()
-            
-            filtered_df = dealings_df[(dealings_df['Parsed Date'] >= min_date) & (dealings_df['Parsed Date'] <= max_date)]
-            
-            if filtered_df.empty and not dealings_df.empty:
-                st.warning(f"⚠️ Scraped {len(dealings_df)} dealings, but none fall within the selected stock period ({min_date.date()} → {max_date.date()}). Try a longer period (e.g. '5y' or 'max').")
-                dealings_df = filtered_df
+            filtered_df = dealings_df[
+                (dealings_df['Parsed Date'] >= min_date) &
+                (dealings_df['Parsed Date'] <= max_date)
+            ]
+
+            if filtered_df.empty:
+                st.warning(
+                    f"⚠️ {len(dealings_df)} dealings scraped, but none fall within the chart period "
+                    f"({min_date.date()} → {max_date.date()}). "
+                    "Try selecting a longer period (e.g. **5y** or **max**) in the sidebar."
+                )
+                # Still show price chart without markers
+                fig = go.Figure()
+                fig.add_trace(go.Scatter(x=stock_df.index, y=stock_df['Close'],
+                    name="Daily Close Price (RM)", line=dict(color="rgba(41,98,255,0.6)", width=2)))
+                fig.update_layout(title=f"Stock Price: {company_code}.KL", template="plotly_white", height=500)
+                st.plotly_chart(fig, use_container_width=True)
             else:
                 dealings_df = filtered_df
-            
-            # 4. Create Plotly Visualization
-            fig = go.Figure()
 
-            # Stock Price Line (Y=Price, X=Date)
-            fig.add_trace(go.Scatter(
-                x=stock_df.index,
-                y=stock_df['Close'],
-                name="Daily Close Price (RM)",
-                line=dict(color="rgba(41, 98, 255, 0.6)", width=2),
-                hovertemplate="Date: %{x|%d %b %Y}<br>Close: RM %{y:.3f}<extra></extra>"
-            ))
+                # --- 6. Split acquisitions vs disposals ---
+                # Use na=False so NaN Transaction Type rows are excluded cleanly
+                acq = dealings_df[
+                    dealings_df['Transaction Type'].str.lower().str.contains(
+                        "acqui|bought|purchase", na=False
+                    )
+                ].copy()
+                dis = dealings_df[
+                    dealings_df['Transaction Type'].str.lower().str.contains(
+                        "dispos|sold|sale", na=False
+                    )
+                ].copy()
 
-            # Split into Acquired and Disposed
-            acq = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("acquire|acquisition|bought")]
-            dis = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("dispose|disposal|sold")]
+                # Drop rows with no price — they'd be invisible on chart anyway
+                acq = acq.dropna(subset=['Price (RM)'])
+                dis = dis.dropna(subset=['Price (RM)'])
 
-            # Acquisitions (Green Dots) - X=Date, Y=Price
-            if not acq.empty:
+                st.info(f"📍 Showing **{len(acq)} acquisitions** (🟢) and **{len(dis)} disposals** (🔴) on chart. "
+                        f"Period: {min_date.date()} → {max_date.date()}")
+
+                # --- 7. Build chart ---
+                fig = go.Figure()
+
+                # Stock price line
                 fig.add_trace(go.Scatter(
-                    x=acq['Parsed Date'],
-                    y=acq['Price (RM)'],
-                    mode='markers',
-                    name='Acquisition',
-                    marker=dict(color='#2E7D32', size=12, symbol='circle', line=dict(width=2, color='white')),
-                    customdata=acq[['Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type']],
-                    hovertemplate="<b>%{customdata[0]}</b><br>" +
-                                "Designation: %{customdata[1]}<br>" +
-                                "Shares: %{customdata[2]:,.0f}<br>" +
-                                "Transaction Price: RM %{customdata[3]:.3f}<br>" +
-                                "Type: %{customdata[4]}<br>" +
-                                "Date: %{x|%d %b %Y}<extra></extra>"
+                    x=stock_df.index,
+                    y=stock_df['Close'],
+                    name="Daily Close Price (RM)",
+                    line=dict(color="rgba(41, 98, 255, 0.6)", width=2),
+                    hovertemplate="Date: %{x|%d %b %Y}<br>Close: RM %{y:.3f}<extra></extra>"
                 ))
 
-            # Disposals (Red Dots) - X=Date, Y=Price
-            if not dis.empty:
-                fig.add_trace(go.Scatter(
-                    x=dis['Parsed Date'],
-                    y=dis['Price (RM)'],
-                    mode='markers',
-                    name='Disposal',
-                    marker=dict(color='#C62828', size=12, symbol='circle', line=dict(width=2, color='white')),
-                    customdata=dis[['Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type']],
-                    hovertemplate="<b>%{customdata[0]}</b><br>" +
-                                "Designation: %{customdata[1]}<br>" +
-                                "Shares: %{customdata[2]:,.0f}<br>" +
-                                "Transaction Price: RM %{customdata[3]:.3f}<br>" +
-                                "Type: %{customdata[4]}<br>" +
-                                "Date: %{x|%d %b %Y}<extra></extra>"
-                ))
+                # Acquisitions — green dots at transaction price
+                if not acq.empty:
+                    fig.add_trace(go.Scatter(
+                        x=acq['Parsed Date'],
+                        y=acq['Price (RM)'],
+                        mode='markers',
+                        name='Acquisition 🟢',
+                        marker=dict(color='#2E7D32', size=13, symbol='circle',
+                                    line=dict(width=2, color='white')),
+                        customdata=acq[['Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type']].values,
+                        hovertemplate=(
+                            "<b>%{customdata[0]}</b><br>"
+                            "Designation: %{customdata[1]}<br>"
+                            "Shares: %{customdata[2]:,.0f}<br>"
+                            "Transaction Price: RM %{customdata[3]:.3f}<br>"
+                            "Type: %{customdata[4]}<br>"
+                            "Date: %{x|%d %b %Y}<extra></extra>"
+                        )
+                    ))
 
-            fig.update_layout(
-                title=dict(
-                    text=f"Stock Price vs. Insider Dealings: {company_code}.KL",
-                    font=dict(size=24)
-                ),
-                xaxis=dict(
-                    title="Date (Horizontal Axis)",
-                    showgrid=True,
-                    gridcolor='lightgray'
-                ),
-                yaxis=dict(
-                    title="Price (RM) (Vertical Axis)",
-                    showgrid=True,
-                    gridcolor='lightgray'
-                ),
-                template="plotly_white",
-                hovermode='closest',
-                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                height=700
-            )
+                # Disposals — red dots at transaction price
+                if not dis.empty:
+                    fig.add_trace(go.Scatter(
+                        x=dis['Parsed Date'],
+                        y=dis['Price (RM)'],
+                        mode='markers',
+                        name='Disposal 🔴',
+                        marker=dict(color='#C62828', size=13, symbol='circle',
+                                    line=dict(width=2, color='white')),
+                        customdata=dis[['Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type']].values,
+                        hovertemplate=(
+                            "<b>%{customdata[0]}</b><br>"
+                            "Designation: %{customdata[1]}<br>"
+                            "Shares: %{customdata[2]:,.0f}<br>"
+                            "Transaction Price: RM %{customdata[3]:.3f}<br>"
+                            "Type: %{customdata[4]}<br>"
+                            "Date: %{x|%d %b %Y}<extra></extra>"
+                        )
+                    ))
 
-            st.plotly_chart(fig, use_container_width=True)
+                fig.update_layout(
+                    title=dict(text=f"Stock Price vs. Insider Dealings: {company_code}.KL", font=dict(size=22)),
+                    xaxis=dict(title="Date", showgrid=True, gridcolor="lightgray"),
+                    yaxis=dict(title="Price (RM)", showgrid=True, gridcolor="lightgray"),
+                    template="plotly_white",
+                    hovermode="closest",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    height=700
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
-            # 5. Data Table
-            with st.expander("View Raw Dealings Data"):
-                st.dataframe(dealings_df[['Parsed Date', 'Name', 'Designation', 'Description', 'No. of Shares', 'Price (RM)', 'Transaction Type', 'URL']], use_container_width=True)
+                # --- 8. Data table ---
+                with st.expander("📋 View Full Dealings Table"):
+                    show_cols = ['Parsed Date', 'Name', 'Designation', 'Description',
+                                 'No. of Shares', 'Price (RM)', 'Transaction Type', 'URL']
+                    st.dataframe(dealings_df[show_cols], use_container_width=True)
+
 
 else:
     st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
