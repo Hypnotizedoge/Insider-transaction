@@ -26,16 +26,37 @@ with st.sidebar:
 def get_stock_data(ticker_code, period):
     ticker = f"{ticker_code}.KL"
     try:
-        df = yf.download(ticker, period=period, interval="1d")
+        df = yf.download(ticker, period=period, interval="1d", auto_adjust=False, progress=False)
         if df.empty:
             return None
-        # Handle MultiIndex if necessary
+
+        # yfinance >= 0.2 returns MultiIndex columns: (field, ticker)
+        # Flatten to single level using the field name (first level)
         if isinstance(df.columns, pd.MultiIndex):
+            # Drop the ticker level — keep field names only
             df.columns = df.columns.get_level_values(0)
+
+        # Deduplicate columns (can happen if MultiIndex had repeated field names)
+        df = df.loc[:, ~df.columns.duplicated()]
+
+        # Ensure we have a 'Close' column
+        if "Close" not in df.columns:
+            st.error(f"No 'Close' column found. Available: {list(df.columns)}")
+            return None
+
+        # Keep only the columns we need
+        keep = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in df.columns]
+        df = df[keep].copy()
+
+        # Remove timezone from index so date comparisons work
+        if hasattr(df.index, "tz") and df.index.tz is not None:
+            df.index = df.index.tz_localize(None)
+
         return df
     except Exception as e:
         st.error(f"Error fetching stock data: {e}")
         return None
+
 
 # --- Main App Logic ---
 if scrape_btn:
@@ -90,13 +111,9 @@ if scrape_btn:
             with st.expander(f"🔍 Debug: Raw scraped data ({len(dealings_df)} rows before date filter)"):
                 st.dataframe(dealings_df, use_container_width=True)
 
-            # Filter dealings to match stock period range
-            # Strip timezone from stock index to match naive scraped dates
+            # Filter dealings to match stock period range (index is already tz-naive)
             min_date = stock_df.index.min()
             max_date = stock_df.index.max()
-            if hasattr(min_date, 'tzinfo') and min_date.tzinfo is not None:
-                min_date = min_date.tz_localize(None)
-                max_date = max_date.tz_localize(None)
             
             filtered_df = dealings_df[(dealings_df['Parsed Date'] >= min_date) & (dealings_df['Parsed Date'] <= max_date)]
             
@@ -111,11 +128,11 @@ if scrape_btn:
 
             # Stock Price Line (Y=Price, X=Date)
             fig.add_trace(go.Scatter(
-                x=stock_df.index, 
-                y=stock_df['Close'], 
-                name="Stock Price (Close)",
-                line=dict(color="rgba(41, 98, 255, 0.5)", width=2),
-                hoverinfo='x+y'
+                x=stock_df.index,
+                y=stock_df['Close'],
+                name="Daily Close Price (RM)",
+                line=dict(color="rgba(41, 98, 255, 0.6)", width=2),
+                hovertemplate="Date: %{x|%d %b %Y}<br>Close: RM %{y:.3f}<extra></extra>"
             ))
 
             # Split into Acquired and Disposed
