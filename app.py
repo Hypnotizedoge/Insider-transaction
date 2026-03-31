@@ -2,25 +2,76 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import scrape_bursa
-import time
 
 st.set_page_config(page_title="Bursa Insider Dealing Overlay", layout="wide")
 
 st.title("📊 Bursa Malaysia Insider Dealing Overlay")
 st.markdown("Visualize director and major shareholder dealings on top of historical stock prices.")
 
-# --- Sidebar Inputs ---
+# --- Sidebar ---
 with st.sidebar:
-    st.header("Settings")
+    st.header("⚙️ Settings")
     company_code = st.text_input("Company Code (e.g., 0151)", value="0151")
-    pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=10)
-    
-    st.divider()
     period = st.selectbox("Stock Price Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
-    
-    scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
+
+    st.divider()
+    st.subheader("Data Source")
+    mode = st.radio("Choose mode", ["📤 Upload CSV (Recommended)", "🌐 Live Scrape (Local only)"], index=0)
+
+    dealings_df = pd.DataFrame()
+    scrape_triggered = False
+
+    if mode == "📤 Upload CSV (Recommended)":
+        st.info(
+            "Run `scrape_bursa.py` on your local machine to generate `bursa_dealings.csv`, "
+            "then upload it here.",
+            icon="💡"
+        )
+        uploaded_file = st.file_uploader("Upload bursa_dealings.csv", type=["csv"])
+        analyze_btn = st.button("📊 Analyze Uploaded Data", use_container_width=True)
+        if analyze_btn and uploaded_file is not None:
+            dealings_df = pd.read_csv(uploaded_file)
+            scrape_triggered = True
+        elif analyze_btn and uploaded_file is None:
+            st.warning("Please upload a CSV file first.")
+
+    else:  # Live Scrape mode
+        pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=10)
+        st.warning("⚠️ Live scraping may be blocked on Streamlit Cloud due to Cloudflare IP restrictions. Run locally for best results.", icon="⚠️")
+        scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
+
+        if scrape_btn:
+            try:
+                import scrape_bursa
+                with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
+                    result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+                    if isinstance(result, tuple):
+                        dealings_df, scrape_stats = result
+                    else:
+                        dealings_df = result
+                        scrape_stats = {}
+
+                # Show diagnostics
+                with st.expander("🔧 Scrape Diagnostics", expanded=True):
+                    col1, col2, col3, col4, col5 = st.columns(5)
+                    col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
+                    col2.metric("API Rows Seen", scrape_stats.get("total_rows_seen", 0))
+                    col3.metric("Links Matched", scrape_stats.get("links_found", 0))
+                    col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
+                    col5.metric("After Filter", scrape_stats.get("after_filter", 0))
+                    if scrape_stats.get("errors"):
+                        st.error("Errors: " + " | ".join(scrape_stats["errors"]))
+                    if scrape_stats.get("sample_titles"):
+                        st.caption("**Sample titles seen in API:**")
+                        for t in scrape_stats["sample_titles"]:
+                            st.caption(f"• {t}")
+                    elif scrape_stats.get("pages_fetched", 0) == 0:
+                        st.error("⛔ No API pages fetched — Cloudflare is likely blocking this server's IP. Use **Upload CSV** mode instead.")
+                scrape_triggered = True
+            except Exception as e:
+                st.error(f"Scraping error: {e}")
+
+
 
 # --- Helper Functions ---
 def get_stock_data(ticker_code, period):
@@ -59,7 +110,7 @@ def get_stock_data(ticker_code, period):
 
 
 # --- Main App Logic ---
-if scrape_btn:
+if scrape_triggered:
     # 1. Fetch Stock Data
     with st.spinner(f"Fetching stock data for {company_code}.KL..."):
         stock_df = get_stock_data(company_code, period)
@@ -67,38 +118,6 @@ if scrape_btn:
     if stock_df is None:
         st.error(f"Could not find stock data for ticker '{company_code}.KL'. Please check the code.")
     else:
-        # 2. Scrape Bursa Dealings using the specified backend
-        with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
-            try:
-                result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
-                # scrape() returns (df, stats) — handle both tuple and bare DataFrame defensively
-                if isinstance(result, tuple):
-                    dealings_df, scrape_stats = result
-                else:
-                    dealings_df = result
-                    scrape_stats = {}
-            except Exception as scrape_err:
-                st.error(f"Scraping failed with error: {scrape_err}")
-                st.stop()
-        
-        # Always show diagnostic stats
-        with st.expander("🔧 Scrape Diagnostics", expanded=True):
-            col1, col2, col3, col4, col5 = st.columns(5)
-            col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
-            col2.metric("API Rows Seen", scrape_stats.get("total_rows_seen", 0))
-            col3.metric("Links Matched", scrape_stats.get("links_found", 0))
-            col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
-            col5.metric("After Filter", scrape_stats.get("after_filter", 0))
-            if scrape_stats.get("errors"):
-                st.error("Errors: " + " | ".join(scrape_stats["errors"]))
-            if scrape_stats.get("sample_titles"):
-                st.caption("**Sample titles seen in API (before title filter):**")
-                for t in scrape_stats["sample_titles"]:
-                    st.caption(f"• {t}")
-            elif scrape_stats.get("pages_fetched", 0) == 0:
-                st.error("⛔ No API pages fetched — Cloudflare may be blocking Streamlit Cloud, or cloudscraper is not installed.")
-
-        
         if dealings_df.empty:
             st.warning("No insider dealings (Acquisitions/Disposals) found in the selected range.")
             fig = go.Figure()
@@ -106,7 +125,7 @@ if scrape_btn:
             fig.update_layout(title=f"Stock Price: {company_code}.KL", xaxis_title="Date", yaxis_title="Price (RM)", template="plotly_white")
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.success(f"✅ Successfully scraped {len(dealings_df)} dealings!")
+            st.success(f"✅ Successfully loaded {len(dealings_df)} dealings!")
 
             # --- 3. Parse dates ---
             # scrape_bursa may already return datetime; to_datetime handles both string and datetime
@@ -237,4 +256,7 @@ if scrape_btn:
 
 
 else:
-    st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
+    if mode == "📤 Upload CSV (Recommended)":
+        st.info("👈 Upload a CSV file and click 'Analyze Uploaded Data' in the sidebar to begin.")
+    else:
+        st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
