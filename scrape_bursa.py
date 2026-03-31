@@ -12,6 +12,10 @@ import pandas as pd
 import re
 import time
 import random
+import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+log = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -175,18 +179,18 @@ def parse_detail(html_text: str) -> list:
 
 
 def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages: int = PAGES_TO_SCRAPE) -> pd.DataFrame:
-    print(f"\n{'='*60}")
-    print(f"Bursa Dealings Scraper (HTTP API) – Company: {company_code} Category: {category}")
-    print(f"{'='*60}\n")
+    log.info(f"\n{'='*60}")
+    log.info(f"Bursa Dealings Scraper (HTTP API) – Company: {company_code} Category: {category}")
+    log.info(f"{'='*60}\n")
 
     scraper = cloudscraper.create_scraper()
     main_url = MAIN_URL.format(company=company_code)
     
-    print("[1] Getting Cloudflare clearance…")
+    log.info("[1] Getting Cloudflare clearance…")
     scraper.get(main_url)
     snooze()
 
-    print("[2] Collecting announcements via API…")
+    log.info("[2] Collecting announcements via API…")
     all_links = []
     
     headers = {
@@ -199,17 +203,17 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
         url = API_URL.format(company=company_code, category=category, page=p)
         r = scraper.get(url, headers=headers, timeout=15)
         if r.status_code != 200:
-            print(f"  Error fetching page {p}: HTTP {r.status_code}")
+            log.warning(f"  Error fetching page {p}: HTTP {r.status_code}")
             break
             
         try:
             data = r.json()
             rows = data.get("data", [])
         except Exception as e:
-            print(f"  Error parsing JSON on page {p}: {e}")
+            log.warning(f"  Error parsing JSON on page {p}: {e}")
             break
             
-        print(f"  Page {p}: API returned {len(rows)} items")
+        log.info(f"  Page {p}: API returned {len(rows)} items")
         if not rows:
             break
             
@@ -235,19 +239,19 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
         
         snooze()
 
-    print(f"\n  Total links found: {len(all_links)}")
+    log.info(f"\n  Total links found: {len(all_links)}")
 
-    print("\n[3] Scraping detail pages…")
+    log.info("\n[3] Scraping detail pages…")
     raw_results = []
     for i, lnk in enumerate(all_links, 1):
         href = lnk["href"]
         title = lnk["title"]
-        print(f"  [{i}/{len(all_links)}] {title[:70]}")
+        log.info(f"  [{i}/{len(all_links)}] {title[:70]}")
 
         try:
             r = scraper.get(href, timeout=15)
         except Exception as e:
-            print(f"    Request failed: {e}")
+            log.warning(f"    Request failed: {e}")
             continue
             
         if r.status_code == 200:
@@ -278,9 +282,9 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
                                 "URL":                href,
                             })
                     else:
-                        print(f"    Iframe fetch failed: HTTP {r_iframe.status_code}")
+                        log.warning(f"    Iframe fetch failed: HTTP {r_iframe.status_code}")
                 except Exception as e:
-                    print(f"    Iframe request failed: {e}")
+                    log.warning(f"    Iframe request failed: {e}")
             else:
                 # Fallback to main page parsing if no iframe
                 detail_list = parse_detail(r.text)
@@ -298,10 +302,10 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
                         "URL":                href,
                     })
         else:
-            print(f"    Failed to fetch detail page: HTTP {r.status_code}")
+            log.warning(f"    Failed to fetch detail page: HTTP {r.status_code}")
         snooze(0.5, 1.5)
 
-    print("\n[4] Filtering results…")
+    log.info("\n[4] Filtering results…")
     results = []
     for r in raw_results:
         t_type = str(r.get("Transaction Type") or "").lower()
@@ -337,15 +341,15 @@ if __name__ == "__main__":
     
     df = scrape(company_code=parse_args.company, category=parse_args.category, pages=parse_args.pages)
 
-    print("\n=== RESULTS ===")
+    log.info("\n=== RESULTS ===")
     pd.set_option("display.max_columns", None)
     pd.set_option("display.max_colwidth", 40)
     pd.set_option("display.width", 160)
 
     if not df.empty:
-        print(df[["Date of Transaction", "Name", "Designation", "Price (RM)", "No. of Shares", "Transaction Type"]].to_string(index=False))
+        log.info(df[["Date of Transaction", "Name", "Designation", "Price (RM)", "No. of Shares", "Transaction Type"]].to_string(index=False))
         df.to_csv(OUTPUT_CSV, index=False)
-        print(f"\n✓ Saved to {OUTPUT_CSV}")
-        print(f"  Rows: {len(df)}")
+        log.info(f"\n✓ Saved to {OUTPUT_CSV}")
+        log.info(f"  Rows: {len(df)}")
     else:
-        print("No data extracted.")
+        log.info("No data extracted.")
