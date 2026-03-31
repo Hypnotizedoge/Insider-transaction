@@ -49,7 +49,11 @@ if scrape_btn:
         # 2. Scrape Bursa Dealings using the specified backend
         with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
             # Using the 'scrape' function from the user's scrape_bursa.py
-            dealings_df = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+            try:
+                dealings_df = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+            except Exception as scrape_err:
+                st.error(f"Scraping failed with error: {scrape_err}")
+                st.stop()
         
         if dealings_df.empty:
             st.warning("No insider dealings (Acquisitions/Disposals) found in the selected range.")

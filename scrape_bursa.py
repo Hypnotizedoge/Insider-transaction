@@ -25,7 +25,7 @@ PAGES_TO_SCRAPE = 10             # Number of listing pages to iterate
 OUTPUT_CSV    = "bursa_dealings.csv"
 
 BASE = "https://www.bursamalaysia.com"
-MAIN_URL = f"{BASE}/bm/market_information/announcements/company_announcement?company={COMPANY_CODE}"
+MAIN_URL = f"{BASE}/bm/market_information/announcements/company_announcement?company={{company}}"
 API_URL = f"{BASE}/api/v1/announcements/search?ann_type=company&company={{company}}&category={{category}}&per_page=50&page={{page}}"
 
 
@@ -183,9 +183,10 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     print(f"{'='*60}\n")
 
     scraper = cloudscraper.create_scraper()
+    main_url = MAIN_URL.format(company=company_code)
     
     print("[1] Getting Cloudflare clearance…")
-    scraper.get(MAIN_URL.format(COMPANY_CODE=company_code))
+    scraper.get(main_url)
     snooze()
 
     print("[2] Collecting announcements via API…")
@@ -194,7 +195,7 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     headers = {
         'Accept': 'application/json, text/javascript, */*; q=0.01',
         'X-Requested-With': 'XMLHttpRequest',
-        'Referer': MAIN_URL.format(COMPANY_CODE=company_code)
+        'Referer': main_url
     }
 
     for p in range(1, pages + 1):
