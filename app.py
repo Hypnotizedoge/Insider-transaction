@@ -15,6 +15,14 @@ with st.sidebar:
     period = st.selectbox("Stock Price Period", ["1mo", "3mo", "6mo", "1y", "2y", "5y", "max"], index=3)
     pages_to_scrape = st.number_input("Pages to Scrape", min_value=1, max_value=100, value=20)
     
+    with st.expander("🛠 Advanced / Cloudflare Bypass"):
+        st.markdown(
+            "If Cloudflare heavily blocks this Streamlit app, enter a proxy URL here "
+            "(e.g., `http://username:pass@ip:port`). If left blank, it will attempt "
+            "to use randomized TLS impersonation."
+        )
+        proxy_url = st.text_input("Proxy URL (Optional)", value="")
+
     st.divider()
     st.info("🌐 Fetching data directly on the server")
     scrape_btn = st.button("🚀 Scrape & Analyze", use_container_width=True)
@@ -26,7 +34,8 @@ with st.sidebar:
         try:
             import scrape_bursa
             with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
-                result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+                p = proxy_url.strip() if proxy_url.strip() else None
+                result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape), proxy=p)
                 if isinstance(result, tuple):
                     dealings_df, scrape_stats = result
                 else:

@@ -9,13 +9,15 @@ import pandas as pd
 import re
 import time
 import random
+import random
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-IMPERSONATE = "chrome120"
+# List of browser profiles to randomly select from to avoid static TLS fingerprinting
+IMPERSONATE_PROFILES = ["chrome110", "safari15_5", "safari15_3", "chrome116"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -39,9 +41,13 @@ HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "en-US,en;q=0.9",
-    "X-Requested-With": "XMLHttpRequest",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+    "Upgrade-Insecure-Requests": "1"
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -363,14 +369,22 @@ def _fetch_detail(session, lnk: dict) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN PUBLIC FUNCTION
 # ──────────────────────────────────────────────────────────────────────────────
-def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages: int = PAGES_TO_SCRAPE):
-    """Returns (DataFrame, stats_dict)."""
+def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages: int = PAGES_TO_SCRAPE, proxy: str = None):
+    """Returns (DataFrame, stats_dict). proxy should be a URL like 'http://user:pass@ip:port'"""
     stats = {"pages_fetched": 0, "links_found": 0, "raw_results": 0, "after_filter": 0, "errors": []}
 
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
 
-    # Create a curl_cffi session impersonating Chrome — bypasses Cloudflare TLS fingerprinting
-    session = cffi_requests.Session(impersonate=IMPERSONATE)
+    # Create a curl_cffi session with a random profile and optional proxy
+    profile = random.choice(IMPERSONATE_PROFILES)
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    
+    try:
+        session = cffi_requests.Session(impersonate=profile, proxies=proxies)
+        log.info(f"Created standard session with profile: {profile}")
+    except Exception as e:
+        log.warning(f"Failed to create session with profile {profile}: {e}. Falling back to default.")
+        session = cffi_requests.Session(impersonate="chrome110", proxies=proxies)
 
     # --- Step 1: collect links via API ---
     links, api_stats = _collect_links(session, company_code, category, pages)
