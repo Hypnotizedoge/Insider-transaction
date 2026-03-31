@@ -68,13 +68,28 @@ if scrape_btn:
             
             # 3. Process Dealings Data
             # Note: scrape_bursa.py already converts 'Date of Transaction' to datetime
-            dealings_df['Parsed Date'] = dealings_df['Date of Transaction']
+            dealings_df['Parsed Date'] = pd.to_datetime(dealings_df['Date of Transaction'], dayfirst=True, errors='coerce')
             dealings_df = dealings_df.dropna(subset=['Parsed Date'])
             
+            # Debug: show raw scraped data before date filtering
+            with st.expander(f"🔍 Debug: Raw scraped data ({len(dealings_df)} rows before date filter)"):
+                st.dataframe(dealings_df, use_container_width=True)
+
             # Filter dealings to match stock period range
+            # Strip timezone from stock index to match naive scraped dates
             min_date = stock_df.index.min()
             max_date = stock_df.index.max()
-            dealings_df = dealings_df[(dealings_df['Parsed Date'] >= min_date) & (dealings_df['Parsed Date'] <= max_date)]
+            if hasattr(min_date, 'tzinfo') and min_date.tzinfo is not None:
+                min_date = min_date.tz_localize(None)
+                max_date = max_date.tz_localize(None)
+            
+            filtered_df = dealings_df[(dealings_df['Parsed Date'] >= min_date) & (dealings_df['Parsed Date'] <= max_date)]
+            
+            if filtered_df.empty and not dealings_df.empty:
+                st.warning(f"⚠️ Scraped {len(dealings_df)} dealings, but none fall within the selected stock period ({min_date.date()} → {max_date.date()}). Try a longer period (e.g. '5y' or 'max').")
+                dealings_df = filtered_df
+            else:
+                dealings_df = filtered_df
             
             # 4. Create Plotly Visualization
             fig = go.Figure()

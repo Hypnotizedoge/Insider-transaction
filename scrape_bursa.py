@@ -314,9 +314,9 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
         # Filter for Acquisitions/Disposals
         is_deal = any(term in t_type for term in ["acquired", "acquisition", "disposed", "disposal", "bought", "sold"])
         
-        # Filter for Ordinary Shares (Check if "ordinary share" is in description, or if description is missing but it's a dealings announcement)
-        # Note: If Description is totally missing, we might want to be safe, but user said "ONLY extract data where description is ordinary shares"
-        is_ordinary = "ordinary share" in d_sec
+        # Filter for Ordinary Shares: pass if description contains "ordinary share" OR if description is blank/missing
+        # (Description is often unparsed; don't silently drop valid dealings)
+        is_ordinary = "ordinary share" in d_sec or d_sec.strip() == ""
         
         if is_deal and is_ordinary:
             results.append(r)
