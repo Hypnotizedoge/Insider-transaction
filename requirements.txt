@@ -5,3 +5,4 @@ plotly
 cloudscraper
 beautifulsoup4
 lxml
+requests

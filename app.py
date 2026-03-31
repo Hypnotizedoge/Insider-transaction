@@ -48,12 +48,27 @@ if scrape_btn:
     else:
         # 2. Scrape Bursa Dealings using the specified backend
         with st.spinner(f"Scraping {pages_to_scrape} pages of announcements..."):
-            # Using the 'scrape' function from the user's scrape_bursa.py
             try:
-                dealings_df = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+                result = scrape_bursa.scrape(company_code=company_code, pages=int(pages_to_scrape))
+                # scrape() returns (df, stats) — handle both tuple and bare DataFrame defensively
+                if isinstance(result, tuple):
+                    dealings_df, scrape_stats = result
+                else:
+                    dealings_df = result
+                    scrape_stats = {}
             except Exception as scrape_err:
                 st.error(f"Scraping failed with error: {scrape_err}")
                 st.stop()
+        
+        # Always show diagnostic stats
+        with st.expander("🔧 Scrape Diagnostics", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("Pages Fetched", scrape_stats.get("pages_fetched", 0))
+            col2.metric("Links Found", scrape_stats.get("links_found", 0))
+            col3.metric("Raw Results", scrape_stats.get("raw_results", 0))
+            col4.metric("After Filter", scrape_stats.get("after_filter", 0))
+            if scrape_stats.get("errors"):
+                st.error("Errors encountered: " + " | ".join(scrape_stats["errors"]))
         
         if dealings_df.empty:
             st.warning("No insider dealings (Acquisitions/Disposals) found in the selected range.")
