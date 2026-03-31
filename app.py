@@ -134,12 +134,15 @@ if scrape_triggered:
                 st.dataframe(dealings_df[['Parsed Date', 'Name', 'Designation', 'Transaction Type', 'Price (RM)', 'No. of Shares']], use_container_width=True)
 
             # --- 5. Filter to stock period ---
-            min_date = stock_df.index.min()
-            max_date = stock_df.index.max()
-            filtered_df = dealings_df[
-                (dealings_df['Parsed Date'] >= min_date) &
-                (dealings_df['Parsed Date'] <= max_date)
-            ]
+            min_date = stock_df.index.min().replace(tzinfo=None)
+            max_date = stock_df.index.max().replace(tzinfo=None)
+            
+            # Ensure dealing dates are naive for comparison
+            dealings_df['Parsed Date'] = pd.to_datetime(dealings_df['Parsed Date']).dt.tz_localize(None)
+
+            in_range = (dealings_df['Parsed Date'] >= min_date) & (dealings_df['Parsed Date'] <= max_date)
+            filtered_df = dealings_df[in_range].copy()
+            out_of_range_count = len(dealings_df) - len(filtered_df)
 
             if filtered_df.empty:
                 st.warning(
@@ -162,16 +165,13 @@ if scrape_triggered:
                 dis = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("dispos|sold|sale", na=False)].copy()
 
                 # For DRCO forms that don't explicitly list the price, interpolate them using the stock's Close price for that day!
-                # This ensures the dots still show up on the chart timeline instead of becoming invisible.
                 date_to_close = stock_df['Close'].to_dict()
                 def fill_missing_price(row):
                     if pd.isna(row['Price (RM)']):
-                        # Find the closest matching stock date (or exact)
                         date_val = row['Parsed Date']
                         if date_val in date_to_close:
                             return date_to_close[date_val]
                         else:
-                            # Search locally inside stock_df index (handle weekends by using last valid close)
                             idx = stock_df.index.get_indexer([date_val], method='pad')
                             if idx[0] >= 0:
                                 return stock_df['Close'].iloc[idx[0]]
@@ -180,12 +180,25 @@ if scrape_triggered:
                 acq['Price (RM)'] = acq.apply(fill_missing_price, axis=1)
                 dis['Price (RM)'] = dis.apply(fill_missing_price, axis=1)
 
-                # Now drop any that STILL have no price (e.g. occurred before stock data history)
-                acq = acq.dropna(subset=['Price (RM)'])
-                dis = dis.dropna(subset=['Price (RM)'])
+                final_acq = acq.dropna(subset=['Price (RM)'])
+                final_dis = dis.dropna(subset=['Price (RM)'])
 
-                st.info(f"📍 Plotting **{len(acq)} acquisitions** (🟢) and **{len(dis)} disposals** (🔴) on chart. "
-                        f"Period: {min_date.date()} → {max_date.date()}")
+                # --- 7. Plotting Diagnostics ---
+                with st.expander("📊 Plotting Diagnostics", expanded=True):
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Date Range Match", f"{len(filtered_df)} / {len(dealings_df)}")
+                    c2.metric("Acquisitions Identified", len(acq))
+                    c3.metric("Disposals Identified", len(dis))
+                    
+                    if out_of_range_count > 0:
+                        st.info(f"💡 {out_of_range_count} dealings were hidden because they fall outside the selected **{period}** chart range. Try '5y' or 'max'.")
+                    
+                    dropped_acq = len(acq) - len(final_acq)
+                    dropped_dis = len(dis) - len(final_dis)
+                    if dropped_acq > 0 or dropped_dis > 0:
+                        st.warning(f"⚠️ {dropped_acq + dropped_dis} items could not be plotted because they lack a Price and no stock data was available for their date.")
+
+                acq, dis = final_acq, final_dis
 
                 # --- 7. Build chart ---
                 fig = go.Figure()

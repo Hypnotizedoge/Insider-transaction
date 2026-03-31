@@ -52,7 +52,7 @@ SHARES_KW = ("no. of securities", "no of securities", "number of shares",
              "securities acquired", "securities disposed", "quantity", "no. of shares transacted")
 PRICE_KW  = ("price per share", "transaction price", "consideration per",
              "price (rm", "price(rm", "market price", "consideration")
-TYPE_KW   = ("nature of transaction", "type of transaction", "transaction type", "nature of dealing")
+TYPE_KW   = ("nature of transaction", "type of transaction", "transaction type", "nature of dealing", "circumstances", "nature of change")
 DESIG_KW  = ("designation", "position", "title")
 DESC_KW   = ("description of securities", "class of securities", "type of securities",
              "description of security")
@@ -178,19 +178,15 @@ def parse_detail(html_text: str) -> list:
                     elif _match(label, PRICE_KW):
                         mp = re.search(r"([\d,]+\.?\d*)", val)
                         if mp: cur_rec["Price (RM)"] = _clean_num(mp.group(1))
-                    elif _match(label, TYPE_KW):
+                    # High-priority aggressive sniff for deal types hiding in any label/value
+                    vl_lab = label.lower()
+                    vl_val = val.lower()
+                    if any(w in vl_lab or w in vl_val for w in ["acquired", "acquisition", "bought", "purchase"]):
+                        cur_rec["Transaction Type"] = "Acquired"
+                    elif any(w in vl_lab or w in vl_val for w in ["disposed", "disposal", "sold", "sale"]):
+                        cur_rec["Transaction Type"] = "Disposed"
+                    elif _match(label, TYPE_KW) and not cur_rec["Transaction Type"]:
                         if val: cur_rec["Transaction Type"] = val
-                    elif "description of \"others\" type" in label.lower() and val:
-                        if not cur_rec["Transaction Type"] or cur_rec["Transaction Type"].lower() == "others":
-                            cur_rec["Transaction Type"] = val
-
-                    # Fallback aggressive sniff for transaction type if it's hiding in another value
-                    if val and not cur_rec.get("Transaction Type"):
-                        vl = val.lower()
-                        if any(w in vl for w in ["acquired", "acquisition", "bought"]):
-                            cur_rec["Transaction Type"] = "Acquired"
-                        elif any(w in vl for w in ["disposed", "disposal", "sold"]):
-                            cur_rec["Transaction Type"] = "Disposed"
                     elif "description of \"others\" designation" in label.lower() and val:
                         if not cur_rec["Designation"] or cur_rec["Designation"].lower() == "others":
                             cur_rec["Designation"] = val
@@ -457,6 +453,6 @@ if __name__ == "__main__":
         print(df[["Date of Transaction", "Name", "Designation", "Price (RM)", "No. of Shares", "Transaction Type"]].to_string(index=False))
         output_file = f"{args.company}_bursa_dealings.csv"
         df.to_csv(output_file, index=False)
-        print(f"\n✓ Saved {len(df)} rows to {output_file}")
+        print(f"\nSaved {len(df)} rows to {output_file}")
     else:
         print("No data extracted.")
