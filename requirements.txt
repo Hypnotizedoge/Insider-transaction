@@ -2,7 +2,7 @@ streamlit
 pandas
 yfinance
 plotly
-cloudscraper
+curl-cffi
 beautifulsoup4
 lxml
 requests
