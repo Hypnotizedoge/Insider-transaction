@@ -3,7 +3,7 @@ Bursa Malaysia - Fast Scraper for "Dealings in Listed Securities" (Chapter 14)
 Uses the JSON API to get announcement links, then fetches detail pages in parallel.
 """
 
-import cloudscraper
+from curl_cffi import requests as cffi_requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
@@ -15,6 +15,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
+IMPERSONATE = "chrome120"
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
@@ -22,7 +24,7 @@ COMPANY_CODE    = "1023"
 CATEGORY_ID     = "14"       # Dealings in Listed Securities (Chapter 14)
 PAGES_TO_SCRAPE = 20
 OUTPUT_CSV      = "bursa_dealings.csv"
-MAX_WORKERS     = 8          # Parallel detail-page fetches
+MAX_WORKERS  = 8
 
 BASE     = "https://www.bursamalaysia.com"
 MAIN_URL = f"{BASE}/bm/market_information/announcements/company_announcement?company={{company}}"
@@ -35,9 +37,10 @@ HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/123.0.0.0 Safari/537.36"
+        "Chrome/120.0.0.0 Safari/537.36"
     ),
     "Accept": "application/json, text/javascript, */*; q=0.01",
+    "Accept-Language": "en-US,en;q=0.9",
     "X-Requested-With": "XMLHttpRequest",
 }
 
@@ -220,15 +223,16 @@ def parse_detail(html_text: str) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 1 — Collect announcement links from JSON API
 # ──────────────────────────────────────────────────────────────────────────────
-def _collect_links(scraper, company_code: str, category: str, pages: int):
+def _collect_links(session, company_code: str, category: str, pages: int):
     """Returns (links, api_stats) where api_stats has pages_fetched, total_rows_seen, sample_titles."""
     main_url = MAIN_URL.format(company=company_code)
     api_headers = {**HEADERS, "Referer": main_url}
     api_stats = {"pages_fetched": 0, "total_rows_seen": 0, "sample_titles": []}
 
-    # Light Cloudflare clearance — one GET, no sleep
+    # Warm up the session with a visit to the main page
     try:
-        scraper.get(main_url, timeout=10)
+        session.get(main_url, timeout=15)
+        log.info("Cloudflare clearance OK")
     except Exception as e:
         log.warning(f"Clearance request failed (continuing anyway): {e}")
 
@@ -236,7 +240,7 @@ def _collect_links(scraper, company_code: str, category: str, pages: int):
     for p in range(1, pages + 1):
         url = API_URL.format(company=company_code, category=category, page=p)
         try:
-            r = scraper.get(url, headers=api_headers, timeout=15)
+            r = session.get(url, headers=api_headers, timeout=15)
         except Exception as e:
             log.warning(f"API page {p} request error: {e}")
             break
@@ -302,14 +306,14 @@ def _collect_links(scraper, company_code: str, category: str, pages: int):
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 2 — Fetch one detail page + iframe (called in parallel)
 # ──────────────────────────────────────────────────────────────────────────────
-def _fetch_detail(scraper, lnk: dict) -> list:
+def _fetch_detail(session, lnk: dict) -> list:
     """Returns list of raw result dicts for one announcement link."""
     href  = lnk["href"]
     title = lnk["title"]
     results = []
 
     try:
-        r = scraper.get(href, timeout=20)
+        r = session.get(href, timeout=20)
     except Exception as e:
         log.warning(f"Detail fetch failed [{title[:50]}]: {e}")
         return results
@@ -328,7 +332,7 @@ def _fetch_detail(scraper, lnk: dict) -> list:
         if not iframe_src.startswith("http"):
             iframe_src = f"{BASE}{iframe_src}"
         try:
-            ri = scraper.get(iframe_src, timeout=20)
+            ri = session.get(iframe_src, timeout=20)
             if ri.status_code == 200:
                 html_to_parse = ri.text
             else:
@@ -365,10 +369,11 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
 
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
 
-    scraper = cloudscraper.create_scraper()
+    # Create a curl_cffi session impersonating Chrome — bypasses Cloudflare TLS fingerprinting
+    session = cffi_requests.Session(impersonate=IMPERSONATE)
 
     # --- Step 1: collect links via API ---
-    links, api_stats = _collect_links(scraper, company_code, category, pages)
+    links, api_stats = _collect_links(session, company_code, category, pages)
     stats["pages_fetched"] = api_stats["pages_fetched"]
     stats["total_rows_seen"] = api_stats["total_rows_seen"]
     stats["sample_titles"] = api_stats["sample_titles"]
@@ -383,7 +388,7 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     raw_results = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        future_to_lnk = {executor.submit(_fetch_detail, scraper, lnk): lnk for lnk in links}
+        future_to_lnk = {executor.submit(_fetch_detail, session, lnk): lnk for lnk in links}
         for future in as_completed(future_to_lnk):
             try:
                 raw_results.extend(future.result())
