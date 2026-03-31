@@ -24,7 +24,7 @@ IMPERSONATE_PROFILES = ["chrome110", "safari15_5", "safari15_3", "chrome116"]
 # ──────────────────────────────────────────────────────────────────────────────
 COMPANY_CODE    = "0151"
 CATEGORY_ID     = "DRCO"     # Director/CEO and Major Shareholder Dealings
-PAGES_TO_SCRAPE = 20
+PAGES_TO_SCRAPE = 5
 OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
 MAX_WORKERS  = 8
 
