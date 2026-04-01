@@ -37,7 +37,7 @@ API_URL  = (
 
 HEADERS = {
     "Accept": "application/json, text/javascript, */*; q=0.01",
-    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Language": "ms-MY,ms;q=0.9,en-US;q=0.8,en;q=0.7",
     "X-Requested-With": "XMLHttpRequest",
     "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
     "Sec-Ch-Ua-Mobile": "?0",
@@ -46,7 +46,10 @@ HEADERS = {
     "Sec-Fetch-Mode": "cors",
     "Sec-Fetch-Site": "same-origin",
     "Origin": "https://www.bursamalaysia.com",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
+
 
 
 
@@ -468,7 +471,35 @@ def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 # MAIN PUBLIC FUNCTION
 # ──────────────────────────────────────────────────────────────────────────────
+def check_connection(proxy=None):
+    """Debug helper to check IP and Bursa connectivity from the current environment."""
+    results = {"ip": "Unknown", "bursa_status": "Unknown", "bursa_snippet": "", "error": None}
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    
+    try:
+        # 1. Check Public IP (using a stable service)
+        session = cffi_requests.Session(impersonate=IMPERSONATE, proxies=proxies)
+        r_ip = session.get("https://httpbin.org/ip", timeout=10)
+        if r_ip.status_code == 200:
+            results["ip"] = r_ip.json().get("origin", "Unknown")
+            
+        # 2. Check Bursa Malaysia
+        # We try the same warmup logic as the main scraper
+        r_bursa = session.get(BASE, timeout=10)
+        results["bursa_status"] = r_bursa.status_code
+        if r_bursa.status_code != 200:
+            results["bursa_snippet"] = r_bursa.text[:500].replace('\n', ' ')
+        else:
+            results["bursa_snippet"] = "Success! Homepage is accessible."
+            
+    except Exception as e:
+        results["error"] = str(e)
+        
+    return results
+
+
 def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages: int = PAGES_TO_SCRAPE, proxy: str = None):
+
     """Returns (DataFrame, stats_dict). proxy should be a URL like 'http://user:pass@ip:port'"""
     stats = {"pages_fetched": 0, "links_found": 0, "raw_results": 0, "after_filter": 0, "errors": [], "sample_titles": []}
 
@@ -477,7 +508,8 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     main_url = MAIN_URL.format(company=company_code)
 
     # Try multiple profiles if the standard one fails
-    profiles = [IMPERSONATE, "chrome110", "chrome101"]
+    profiles = [IMPERSONATE, "chrome110", "chrome101", "safari_ios_16_0", "firefox120"]
+
 
     
     session = None
