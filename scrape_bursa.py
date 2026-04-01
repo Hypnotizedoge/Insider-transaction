@@ -22,7 +22,7 @@ IMPERSONATE = "chrome124"
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-COMPANY_CODE    = "0001"
+COMPANY_CODE    = "0151"
 CATEGORY_ID     = "DRCO"     # Director/CEO and Major Shareholder Dealings
 PAGES_TO_SCRAPE = 5
 OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
@@ -359,7 +359,12 @@ def _collect_links(session, company_code: str, category: str, pages: int):
         if api_stats["pages_fetched"] > 0 and api_stats["total_rows_seen"] == 0:
              api_stats["errors"].append("API returned 0 rows despite successful requests. This often happens when Cloudflare silently filters data center IPs.")
     
+    log.info(f"Total qualifying links: {len(links)}")
+    return links, api_stats
+
+
 def _scrape_links_from_html(session, company_code: str, category: str, page: int):
+
     """Fallback: Scrapes the static HTML table if the API is blocked."""
     url = MAIN_URL.format(company=company_code)
     # The HTML page might only show the first page easily, but it's better than nothing.
@@ -405,16 +410,10 @@ def _scrape_links_from_html(session, company_code: str, category: str, page: int
         log.warning(f"HTML fallback error: {e}")
         return []
 
-
-    log.info(f"Total qualifying links: {len(links)}")
-    return links, api_stats
-
-
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # STEP 2 — Fetch one detail page + iframe (called in parallel)
 # ──────────────────────────────────────────────────────────────────────────────
+
 def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
     """Returns list of raw result dicts for one announcement link."""
     href  = lnk["href"]
