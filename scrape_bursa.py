@@ -506,8 +506,9 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
     main_url = MAIN_URL.format(company=company_code)
 
-    # Try multiple profiles if the standard one fails
-    profiles = [IMPERSONATE, "chrome110", "chrome101", "safari_ios_16_0", "firefox120"]
+    # On Linux/Streamlit, Chrome profiles are most reliable.
+    profiles = ["chrome110", "chrome101", "chrome120", IMPERSONATE]
+
 
 
     

@@ -106,7 +106,7 @@ with tab_analysis:
                 fig = go.Figure()
                 fig.add_trace(go.Scatter(x=stock_df.index, y=stock_df['Close'], name="Close Price", line=dict(color="#2962FF", width=2)))
                 fig.update_layout(title=f"Stock Price: {company_code}.KL", xaxis_title="Date", yaxis_title="Price (RM)", template="plotly_white")
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width='stretch')
             else:
                 st.success(f"✅ Successfully loaded {len(dealings_df)} dealings!")
 
@@ -118,7 +118,7 @@ with tab_analysis:
 
                 # --- 4. Show raw data for inspection ---
                 with st.expander(f"🔍 Raw scraped data ({len(dealings_df)} rows)"):
-                    st.dataframe(dealings_df[['Parsed Date', 'Name', 'Designation', 'Transaction Type', 'Price (RM)', 'No. of Shares']], use_container_width=True)
+                    st.dataframe(dealings_df[['Parsed Date', 'Name', 'Designation', 'Transaction Type', 'Price (RM)', 'No. of Shares']], width='stretch')
 
                 # --- 5. Filter to stock period ---
                 min_date = stock_df.index.min().replace(tzinfo=None)
@@ -133,7 +133,7 @@ with tab_analysis:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=stock_df.index, y=stock_df['Close'], name="Daily Close Price (RM)", line=dict(color="rgba(41,98,255,0.6)", width=2)))
                     fig.update_layout(title=f"Stock Price: {company_code}.KL", template="plotly_white", height=500)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 else:
                     dealings_df = filtered_df
                     acq = dealings_df[dealings_df['Transaction Type'].str.lower().str.contains("acqui|bought|purchase", na=False)].copy()
@@ -162,11 +162,11 @@ with tab_analysis:
                             customdata=dis[['Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type']].values, hovertemplate="<b>%{customdata[0]}</b><br>Shares: %{customdata[2]:,.0f}<br>Price: RM %{customdata[3]:.3f}<extra></extra>"))
 
                     fig.update_layout(title=f"Stock Price vs. Insider Dealings: {company_code}.KL", template="plotly_white", height=600)
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                     
                     with st.expander("📋 View Full Dealings Table"):
                         show_cols = ['Parsed Date', 'Name', 'Designation', 'No. of Shares', 'Price (RM)', 'Transaction Type', 'URL']
-                        st.dataframe(dealings_df[show_cols], use_container_width=True)
+                        st.dataframe(dealings_df[show_cols], width='stretch')
 
     else:
         st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
