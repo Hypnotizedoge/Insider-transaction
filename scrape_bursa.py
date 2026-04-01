@@ -16,7 +16,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-IMPERSONATE = "chrome120"
+IMPERSONATE = "chrome124"
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -38,7 +39,16 @@ HEADERS = {
     "Accept": "application/json, text/javascript, */*; q=0.01",
     "Accept-Language": "en-US,en;q=0.9",
     "X-Requested-With": "XMLHttpRequest",
+    "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "same-origin",
+    "Origin": "https://www.bursamalaysia.com",
 }
+
+
 
 
 
@@ -233,30 +243,52 @@ def _collect_links(session, company_code: str, category: str, pages: int):
 
     # Warm up the session with a visit to the main page
     try:
-        session.get(main_url, timeout=15)
-        log.info("Cloudflare clearance OK")
+        # Visit the base URL first to set initial cookies
+        session.get(BASE, timeout=15)
+        # Then visit the announcements page
+        session.get(main_url, headers={"Referer": BASE}, timeout=15)
+        log.info("Cloudflare clearance / Session warmup OK")
     except Exception as e:
         log.warning(f"Clearance request failed (continuing anyway): {e}")
+
 
     links = []
     for p in range(1, pages + 1):
         url = API_URL.format(company=company_code, category=category, page=p)
-        try:
-            r = session.get(url, headers=api_headers, timeout=15)
-        except Exception as e:
-            log.warning(f"API page {p} request error: {e}")
-            break
-
-        if r.status_code != 200:
-            log.warning(f"API page {p}: HTTP {r.status_code}")
+        # Optional: Add retry logic for API calls
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                r = session.get(url, headers=api_headers, timeout=15)
+                if r.status_code == 200:
+                    break
+                elif r.status_code in [403, 429]:
+                    log.warning(f"API page {p} attempt {attempt+1}: HTTP {r.status_code}. Possible block.")
+                    if attempt < max_retries:
+                        time.sleep(random.uniform(2, 5))
+                        continue
+            except Exception as e:
+                log.warning(f"API page {p} request error attempt {attempt+1}: {e}")
+                if attempt < max_retries:
+                    time.sleep(1)
+                    continue
+                break
+        else:
+            log.error(f"API page {p} failed after {max_retries+1} attempts.")
+            if r and r.status_code != 200:
+                snippet = r.text[:500].replace('\n', ' ')
+                api_stats["errors"].append(f"Page {p} HTTP {r.status_code}: {snippet}")
             break
 
         try:
             data = r.json()
             rows = data.get("data", [])
         except Exception as e:
-            log.warning(f"API page {p} JSON parse error: {e}")
+            snippet = r.text[:500].replace('\n', ' ')
+            log.warning(f"API page {p} JSON parse error (is it a challenge page?): {snippet}")
+            api_stats["errors"].append(f"Page {p} JSON error: {snippet}")
             break
+
 
         api_stats["pages_fetched"] += 1
         api_stats["total_rows_seen"] += len(rows)
@@ -298,8 +330,15 @@ def _collect_links(session, company_code: str, category: str, pages: int):
         # Small polite delay between API pages only
         time.sleep(0.3)
 
+    if not links and not api_stats.get("errors"):
+        # If no links and no errors, but we visited pages, maybe it's just empty.
+        # But if total_rows_seen is 0 and pages_fetched > 0, it's suspicious.
+        if api_stats["pages_fetched"] > 0 and api_stats["total_rows_seen"] == 0:
+             api_stats["errors"].append("API returned 0 rows despite successful requests. This often happens when Cloudflare silently filters data center IPs.")
+    
     log.info(f"Total qualifying links: {len(links)}")
     return links, api_stats
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -349,26 +388,50 @@ def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
 # ──────────────────────────────────────────────────────────────────────────────
 def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages: int = PAGES_TO_SCRAPE, proxy: str = None):
     """Returns (DataFrame, stats_dict). proxy should be a URL like 'http://user:pass@ip:port'"""
-    stats = {"pages_fetched": 0, "links_found": 0, "raw_results": 0, "after_filter": 0, "errors": []}
+    stats = {"pages_fetched": 0, "links_found": 0, "raw_results": 0, "after_filter": 0, "errors": [], "sample_titles": []}
+
 
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
 
-    # Create a session with a strict modern chrome profile + proxy if provided
-    proxies = {"http": proxy, "https": proxy} if proxy else None
+    # Try multiple profiles if the standard one fails
+    profiles = [IMPERSONATE, "chrome110", "safari_15_6_1"]
     
-    try:
-        session = cffi_requests.Session(impersonate=IMPERSONATE, proxies=proxies)
-        log.info(f"Created standard session with profile: {IMPERSONATE}")
-    except Exception as e:
-        log.warning(f"Failed to create session with profile {IMPERSONATE}: {e}. Falling back to default.")
+    session = None
+    for profile in profiles:
+        try:
+            proxies = {"http": proxy, "https": proxy} if proxy else None
+            session = cffi_requests.Session(impersonate=profile, proxies=proxies)
+            log.info(f"Attempting with profile: {profile}")
+            
+            # Warmup
+            session.get(BASE, timeout=15)
+            r_warm = session.get(main_url, headers={"Referer": BASE}, timeout=15)
+            
+            if r_warm.status_code == 200:
+                log.info(f"Profile {profile} confirmed working.")
+                break
+            elif r_warm.status_code == 403:
+                log.warning(f"Profile {profile} got 403. Trying next...")
+                continue
+        except Exception as e:
+            log.warning(f"Error initializing profile {profile}: {e}")
+            continue
+    
+    if not session:
+        # Final fallback
         session = cffi_requests.Session(impersonate="chrome110", proxies=proxies)
+        log.warning("All profiles failed. Using fallback chrome110.")
 
     # --- Step 1: collect links via API ---
     links, api_stats = _collect_links(session, company_code, category, pages)
+
     stats["pages_fetched"] = api_stats["pages_fetched"]
     stats["total_rows_seen"] = api_stats["total_rows_seen"]
     stats["sample_titles"] = api_stats["sample_titles"]
     stats["links_found"] = len(links)
+    if api_stats.get("errors"):
+        stats["errors"].extend(api_stats["errors"])
+
 
     if not links:
         log.warning("No qualifying announcement links found.")

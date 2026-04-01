@@ -17,11 +17,12 @@ with st.sidebar:
     
     with st.expander("🛠 Advanced / Cloudflare Bypass"):
         st.markdown(
-            "If Cloudflare heavily blocks this Streamlit app, enter a proxy URL here "
-            "(e.g., `http://username:pass@ip:port`). If left blank, it will attempt "
-            "to use randomized TLS impersonation."
+            "If Cloudflare blocks this Streamlit app (e.g., 0 results or 403 errors), "
+            "you **must** use a proxy. Residential proxies work best."
         )
-        proxy_url = st.text_input("Proxy URL (Optional)", value="")
+        proxy_url = st.text_input("Proxy URL (e.g. http://user:pass@host:port)", value="")
+        st.caption("Tip: Try [WebShare](https://www.webshare.io/) or [Bright Data](https://brightdata.com/) for cheap rotating proxies.")
+
 
     st.divider()
     st.info("🌐 Fetching data directly on the server")
@@ -50,14 +51,20 @@ with st.sidebar:
                 col3.metric("Links Matched", scrape_stats.get("links_found", 0))
                 col4.metric("Raw Results", scrape_stats.get("raw_results", 0))
                 col5.metric("After Filter", scrape_stats.get("after_filter", 0))
+                
                 if scrape_stats.get("errors"):
-                    st.error("Errors: " + " | ".join(scrape_stats["errors"]))
+                    st.error("🚨 **Scrape Errors / Blocks Detected:**")
+                    for err in scrape_stats["errors"]:
+                        st.warning(err)
+                    st.info("💡 **Recommendation:** If you see 403 errors or '0 rows despite success', please use a **Proxy URL** in the sidebar. Streamlit Cloud's IP address is often flagged by Bursa's Cloudflare.")
+
                 if scrape_stats.get("sample_titles"):
                     st.caption("**Sample titles seen in API (before title filter):**")
                     for t in scrape_stats["sample_titles"]:
                         st.caption(f"• {t}")
-                elif scrape_stats.get("pages_fetched", 0) == 0:
-                    st.error("⛔ API fetch failed. Cloudflare may be completely blocking the Streamlit Cloud datacenter IP.")
+                elif scrape_stats.get("pages_fetched", 0) == 0 and not scrape_stats.get("errors"):
+                    st.error("⛔ API fetch failed completely. No connection or complete silent block.")
+
             
             scrape_triggered = True
         except Exception as e:
