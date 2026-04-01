@@ -20,8 +20,28 @@ with st.sidebar:
             "If Cloudflare blocks this Streamlit app (e.g., 0 results or 403 errors), "
             "you **must** use a proxy. Residential proxies work best."
         )
-        proxy_url = st.text_input("Proxy URL (e.g. http://user:pass@host:port)", value="")
-        st.caption("Tip: Try [WebShare](https://www.webshare.io/) or [Bright Data](https://brightdata.com/) for cheap rotating proxies.")
+        
+        c1, c2 = st.columns([3, 1])
+        px_host = c1.text_input("Proxy Host/IP", placeholder="e.g. 45.1.2.3")
+        px_port = c2.text_input("Port", placeholder="8080")
+        
+        px_user = st.text_input("Proxy Username", placeholder="webshare-user-123")
+        px_pass = st.text_input("Proxy Password", type="password")
+        
+        st.divider()
+        manual_proxy = st.text_input("OR: Manual Proxy URL (Overwrites above)", value="")
+        
+        # Logic to build the URL
+        if manual_proxy.strip():
+            proxy_url = manual_proxy.strip()
+        elif px_host.strip() and px_port.strip():
+            if px_user.strip() and px_pass.strip():
+                proxy_url = f"http://{px_user.strip()}:{px_pass.strip()}@{px_host.strip()}:{px_port.strip()}"
+            else:
+                proxy_url = f"http://{px_host.strip()}:{px_port.strip()}"
+        else:
+            proxy_url = ""
+
 
     st.divider()
     st.info("🌐 Fetching data directly on the server")
