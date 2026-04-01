@@ -257,7 +257,9 @@ def _collect_links(session, company_code: str, category: str, pages: int):
         url = API_URL.format(company=company_code, category=category, page=p)
         # Optional: Add retry logic for API calls
         max_retries = 2
+        r = None
         for attempt in range(max_retries + 1):
+
             try:
                 r = session.get(url, headers=api_headers, timeout=15)
                 if r.status_code == 200:
@@ -353,17 +355,30 @@ def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
     try:
         headers = {"Referer": referer}
         r1 = session.get(href, headers=headers, timeout=15)
+        if r1.status_code != 200:
+            logger.warning(f"Detail page fetch failed (HTTP {r1.status_code}): {href}")
+            return results
+
         soup = BeautifulSoup(r1.text, "lxml")
         
         iframe = soup.find("iframe", id="bm_ann_detail_iframe")
         if not iframe or not iframe.get("src"):
-            return results
+            # Some old pages don't have iframes, they have the content directly
+            # Or maybe it's a different ID.
+            logger.debug(f"No iframe found for {href}")
+            entries = parse_detail(r1.text)
+            if not entries:
+                return results
+        else:
+            src = iframe["src"]
+            frame_url = src if src.startswith("http") else f"{BASE}{src}"
+            
+            r2 = session.get(frame_url, headers=headers, timeout=15)
+            if r2.status_code != 200:
+                logger.warning(f"Iframe fetch failed (HTTP {r2.status_code}): {frame_url}")
+                return results
+            entries = parse_detail(r2.text)
 
-        src = iframe["src"]
-        frame_url = src if src.startswith("http") else f"{BASE}{src}"
-        
-        r2 = session.get(frame_url, headers=headers, timeout=15)
-        entries = parse_detail(r2.text)
         for entry in entries:
             results.append({
                 "Date Posted":          lnk["date_posted"],
@@ -379,8 +394,9 @@ def _fetch_detail_page(session, referer: str, lnk: dict, logger) -> list:
             })
         return results
     except Exception as e:
-        logger.warning(f"Detail fetch failed for {href}: {e}")
+        logger.warning(f"Detail fetch exception for {href}: {e}")
         return results
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -392,9 +408,11 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
 
 
     log.info(f"Bursa Fast Scraper — Company: {company_code}  Category: {category}  Pages: {pages}")
+    main_url = MAIN_URL.format(company=company_code)
 
     # Try multiple profiles if the standard one fails
-    profiles = [IMPERSONATE, "chrome110", "safari_15_6_1"]
+    profiles = [IMPERSONATE, "chrome110", "chrome101"]
+
     
     session = None
     for profile in profiles:
