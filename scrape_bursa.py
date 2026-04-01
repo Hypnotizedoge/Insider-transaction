@@ -61,7 +61,8 @@ DATE_KW   = ("date of transaction", "date of dealing", "date of change", "transa
 SHARES_KW = ("no. of securities", "no of securities", "number of shares",
              "securities acquired", "securities disposed", "quantity", "no. of shares transacted")
 PRICE_KW  = ("price per share", "transaction price", "consideration per",
-             "price (rm", "price(rm", "market price", "consideration")
+             "price (rm", "price(rm", "market price", "consideration", "consideration (myr)")
+
 TYPE_KW   = ("nature of transaction", "type of transaction", "transaction type", "nature of dealing", "circumstances", "nature of change")
 DESIG_KW  = ("designation", "position", "title")
 DESC_KW   = ("description of securities", "class of securities", "type of securities",
@@ -71,11 +72,17 @@ DESC_KW   = ("description of securities", "class of securities", "type of securi
 def _clean_num(v):
     if v is None:
         return None
+    # Handle cases like "1.20 (avg)" or "RM1.20"
     n = re.sub(r"[^\d.]", "", str(v))
+    # If there are multiple dots, take the first one (e.g. 1.20.0 -> 1.20)
+    parts = n.split('.')
+    if len(parts) > 2:
+        n = parts[0] + '.' + "".join(parts[1:])
     try:
         return float(n) if n else None
     except Exception:
         return None
+
 
 
 def _match(label, kws):
@@ -275,11 +282,22 @@ def _collect_links(session, company_code: str, category: str, pages: int):
                     time.sleep(1)
                     continue
                 break
-        else:
-            log.error(f"API page {p} failed after {max_retries+1} attempts.")
-            if r and r.status_code != 200:
+        if r and r.status_code == 403:
+            log.warning(f"API page {p} returned 403. Attempting HTML fallback...")
+            fallback_links = _scrape_links_from_html(session, company_code, category, p)
+            if fallback_links:
+                links.extend(fallback_links)
+                api_stats["pages_fetched"] += 1
+                api_stats["total_rows_seen"] += len(fallback_links)
+                continue
+            else:
+                log.error("HTML Fallback failed to find any data.")
                 snippet = r.text[:500].replace('\n', ' ')
-                api_stats["errors"].append(f"Page {p} HTTP {r.status_code}: {snippet}")
+                api_stats["errors"].append(f"API 403 & Fallback Failed. Snippet: {snippet}")
+                break
+
+        if not r or r.status_code != 200:
+            log.warning(f"API page {p}: HTTP {getattr(r, 'status_code', 'No Response')}")
             break
 
         try:
@@ -338,8 +356,56 @@ def _collect_links(session, company_code: str, category: str, pages: int):
         if api_stats["pages_fetched"] > 0 and api_stats["total_rows_seen"] == 0:
              api_stats["errors"].append("API returned 0 rows despite successful requests. This often happens when Cloudflare silently filters data center IPs.")
     
+def _scrape_links_from_html(session, company_code: str, category: str, page: int):
+    """Fallback: Scrapes the static HTML table if the API is blocked."""
+    url = MAIN_URL.format(company=company_code)
+    # The HTML page might only show the first page easily, but it's better than nothing.
+    try:
+        r = session.get(url, timeout=15)
+        if r.status_code != 200:
+            return []
+        
+        soup = BeautifulSoup(r.text, "lxml")
+        table = soup.find("table", {"id": "announcementsTable"})
+        if not table:
+            # Try a broader search
+            table = soup.find("table")
+        
+        if not table:
+            return []
+            
+        rows = table.find_all("tr")[1:] # skip header
+        html_links = []
+        for row in rows:
+            cells = row.find_all("td")
+            if len(cells) < 4:
+                continue
+            
+            # Date
+            date_posted = cells[1].get_text(strip=True)
+            # Title & Link
+            a = cells[3].find("a", href=True)
+            if not a:
+                continue
+            
+            title = a.get_text(strip=True)
+            if "INTENTION" in title.upper():
+                continue
+                
+            href = a["href"]
+            full_url = href if href.startswith("http") else f"{BASE}{href}"
+            
+            html_links.append({"href": full_url, "title": title, "date_posted": date_posted})
+            
+        return html_links
+    except Exception as e:
+        log.warning(f"HTML fallback error: {e}")
+        return []
+
+
     log.info(f"Total qualifying links: {len(links)}")
     return links, api_stats
+
 
 
 
