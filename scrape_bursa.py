@@ -22,7 +22,7 @@ IMPERSONATE = "chrome124"
 # ──────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
 # ──────────────────────────────────────────────────────────────────────────────
-COMPANY_CODE    = "0151"
+COMPANY_CODE    = "0001"
 CATEGORY_ID     = "DRCO"     # Director/CEO and Major Shareholder Dealings
 PAGES_TO_SCRAPE = 5
 OUTPUT_CSV      = f"bursa_dealings_{COMPANY_CODE}.csv"
@@ -573,32 +573,42 @@ def scrape(company_code: str = COMPANY_CODE, category: str = CATEGORY_ID, pages:
     stats["raw_results"] = len(raw_results)
     log.info(f"Raw results before filter: {len(raw_results)}")
 
-    # --- Step 3: filter ---
+    # --- Step 3: filter strictly for Acquired / Disposed ---
     results = []
     for r in raw_results:
         t_type = str(r.get("Transaction Type") or "").lower()
         d_sec  = str(r.get("Description") or "").lower()
 
-        is_deal    = any(t in t_type for t in ["acquired", "acquisition", "disposed", "disposal", "bought", "sold", "interest"])
-        
-        # We explicitly pass DRCO category rows because they are inherently insider dealing updates.
-        is_drco    = (category == "DRCO")
-        
-        # Pass if description has "ordinary share" OR is empty (often unparsed)
-        is_ordinary = "ordinary share" in d_sec or d_sec.strip() == ""
+        # 1. Primary classification mapping
+        if any(w in t_type for w in ["acqui", "bought", "purchase"]):
+            r["Transaction Type"] = "Acquired"
+        elif any(w in t_type for w in ["dispos", "sold", "sale"]):
+            r["Transaction Type"] = "Disposed"
+        elif category == "DRCO":
+             # Try deeper sniff on description if type is missing
+             if any(w in d_sec for w in ["acqui", "bought", "purchase"]):
+                 r["Transaction Type"] = "Acquired"
+             elif any(w in d_sec for w in ["dispos", "sold", "sale"]):
+                 r["Transaction Type"] = "Disposed"
 
-        if (is_deal or is_drco) and is_ordinary:
-            # Coerce the transaction type so the Streamlit frontend can plot it
-            if is_drco and not is_deal:
-                if "acqui" in d_sec or "bought" in d_sec:
-                    r["Transaction Type"] = "Acquired"
-                elif "dispos" in d_sec or "sold" in d_sec:
-                    r["Transaction Type"] = "Disposed"
-
-            results.append(r)
+        # 2. Final strict filter: ONLY Acquired or Disposed allowed
+        if r.get("Transaction Type") in ["Acquired", "Disposed"]:
+             # Basic filter for ordinary shares
+             is_ordinary = "ordinary share" in d_sec or d_sec.strip() == ""
+             if is_ordinary:
+                 # --- Auto-correction for total consideration ---
+                 # If Price > 1000, it's likely total RM amount, not price per share.
+                 price = r.get("Price (RM)")
+                 shares = r.get("No. of Shares")
+                 if price and shares and price > 1000 and shares > 0:
+                     r["Price (RM)"] = round(price / shares, 4)
+                 
+                 results.append(r)
 
     df = pd.DataFrame(results)
     stats["after_filter"] = len(df)
+
+
 
     if not df.empty:
         for col in ("Date Posted", "Date of Transaction"):
