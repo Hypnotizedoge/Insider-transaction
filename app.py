@@ -277,5 +277,7 @@ if scrape_triggered:
                     st.dataframe(dealings_df[show_cols], use_container_width=True)
 
 
+
+
 else:
     st.info("👈 Enter a company code and click 'Scrape & Analyze' in the sidebar to begin.")
